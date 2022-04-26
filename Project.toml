@@ -1,0 +1,7 @@
+[deps]
+AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
+Automa = "67c07d97-cdcb-5c2c-af73-a7f9c32a568b"
+K = "0e651bef-d0e7-4b42-b08d-2a7a2dfec234"
+MethodAnalysis = "85b6ec6f-f7df-4429-9514-a64bcd9ee824"
+NarrativeTest = "9563631e-acd4-5dd8-bebb-4cf36518960d"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"

@@ -1,0 +1,3 @@
+[submodule "NarrativeTest.jl"]
+	path = NarrativeTest.jl
+	url = git@github.com:andreypopp/NarrativeTest.jl.git

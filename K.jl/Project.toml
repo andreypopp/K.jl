@@ -1,0 +1,11 @@
+name = "K"
+uuid = "0e651bef-d0e7-4b42-b08d-2a7a2dfec234"
+authors = ["Andrey Popp <8mayday@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
+Automa = "67c07d97-cdcb-5c2c-af73-a7f9c32a568b"
+NarrativeTest = "9563631e-acd4-5dd8-bebb-4cf36518960d"
+ReplMaker = "b873ce64-0db9-51f5-a568-4457d8e49576"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
