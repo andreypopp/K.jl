@@ -79,7 +79,14 @@ end
 
 struct Name <: Syntax
   v::Symbol
+  Name(v::Symbol) = new(v)
   Name(v::String) = new(Symbol(v))
+end
+
+struct Prim <: Syntax
+  v::Symbol
+  Prim(v::Symbol) = new(v)
+  Prim(v::String) = new(Symbol(v))
 end
 
 isnoun(syn::Syntax) = !isverb(syn)
@@ -151,7 +158,7 @@ function expr(ctx::ParseContext)
   elseif isverb(t)
     a = expr(ctx)
     if a !== nothing
-      Node(:app, [t, a])
+      Node(:app, [t, Lit(1), a])
     else
       t
     end
@@ -160,12 +167,14 @@ function expr(ctx::ParseContext)
     if ve !== nothing
       if ve isa Node &&
          ve.type === :app &&
-         length(ve.body) == 2 &&
+         length(ve.body) == 3 &&
          ve.body[1] isa Node && ve.body[1].type === :verb
-        v, x = ve.body
-        Node(:app, [v, t, x])
+        v, _, x = ve.body
+        Node(:app, [v, Lit(2), t, x])
+      elseif ve isa Node && ve.type === :verb
+        Node(:app, [ve, Lit(2), t])
       else
-        Node(:app, [t, ve])
+        Node(:app, [t, Lit(1), ve])
       end
     else
       t
@@ -209,10 +218,10 @@ function term(ctx::ParseContext)
   t = 
     if next === :verb
       _, value = consume!(ctx)
-      adverb(Node(:verb, [Name(value)]), ctx)
+      adverb(Node(:verb, [Prim(value)]), ctx)
     elseif next === :name
       _, value = consume!(ctx)
-      maybe_adverb(Name(Symbol(value)), ctx)
+      maybe_adverb(Name(value), ctx)
     elseif next === :int || next === :float
       lit = number(ctx)
       maybe_adverb(lit, ctx)
@@ -248,7 +257,7 @@ function app(t, ctx::ParseContext)
     es = exprs(ctx)
     @assert peek(ctx) === :rbracket
     consume!(ctx)
-    t = Node(:app, [t, es...])
+    t = Node(:app, [t, Lit(length(es)), es...])
   end
   t
 end
@@ -256,7 +265,7 @@ end
 function adverb(verb, ctx::ParseContext)
   while peek(ctx) === :adverb
     _, value = consume!(ctx)
-    push!(verb.body, Name(value))
+    push!(verb.body, Prim(value))
   end
   verb
 end
@@ -275,10 +284,11 @@ module Runtime
 
 struct PFunction
   f::Function
-  args::Tuple{Any}
+  args::Tuple
   arity::Int64
 end
 (s::PFunction)(args...) = s.f(s.args..., args...)
+Base.show(io::IO, s::PFunction) = print(io, "*$(s.arity)-kfun*")
 
 arity(f::Function) = methods(f)[1].nargs - 1
 arity(f::PFunction) = f.arity
@@ -290,9 +300,9 @@ papp(f::PFunction, args, narr) =
 
 app(f::Union{Function, PFunction}, args...) =
   begin
-    alen, slen = arity(f), length(args)
-    if alen === slen; f(args...)
-    elseif alen > slen; papp(f, args, alen - slen)
+    flen, alen = arity(f), length(args)
+    if flen === alen; f(args...)
+    elseif flen > alen; papp(f, args, flen - alen)
     else; @assert false "arity error"
     end
   end
@@ -339,9 +349,8 @@ ksub(x::Vector, y::Vector) =
   (@assert length(x) == length(y); ksub.(x, y))
 
 # * x
-# TODO: ...
 kfirst(x) = x
-kfirst(x::Vector) = x[1]
+kfirst(x::Vector) = isempty(x) ? null(eltype(x)) : x[1]
 
 # x * y
 kmul(x, y) = x * y
@@ -420,16 +429,24 @@ kappn(x, y) = @assert false "not implemented"
 
 kfoldM(@nospecialize(f)) = (x) ->
   isempty(x) ? identity(f) : foldl(f, x)
+kfoldD(@nospecialize(f)) = (x, y) ->
+  foldl(f, y, init=x)
 
 identity(f) =
   if f === kadd; 0
   else; ""
   end
 
+null(::Type{Float64}) = 0.0
+null(::Type{Int64}) = 0
+# See https://chat.stackexchange.com/transcript/message/58631508#58631508 for a
+# reasoning to return "" (an empty string).
+null(::Type{Any}) = []
+
 end
 
 module Compile
-import ..Parse: Syntax, Node, Lit, Name
+import ..Parse: Syntax, Node, Lit, Name, Prim
 import ..Runtime
 
 verbs = Dict(
@@ -437,6 +454,8 @@ verbs = Dict(
              (:(:), 2) => Runtime.kright,
              (:+, 1) => Runtime.kflip,
              (:+, 2) => Runtime.kadd,
+             (:*, 1) => Runtime.kfirst,
+             (:*, 2) => Runtime.kmul,
              (:-, 1) => Runtime.kneg,
              (:-, 2) => Runtime.ksub,
              (:(!), 1) => Runtime.kenum,
@@ -444,6 +463,7 @@ verbs = Dict(
 
 adverbs = Dict(
                (:(/), 1) => Runtime.kfoldM,
+               (:(/), 2) => Runtime.kfoldD,
               )
 
 function compile(syn::Node)
@@ -451,46 +471,25 @@ function compile(syn::Node)
   quote $(es...) end
 end
 
-function compile1(syn::Syntax)
-  if syn isa Lit
-    :($(syn.v))
-  elseif syn isa Name
-    :($(syn.v))
-  elseif syn.type === :seq
+compile1(syn::Node) =
+  if syn.type === :seq
     es = map(compile1, syn.body)
     :([$(es...)])
   elseif syn.type === :app
-    v, args... = syn.body
-    args, argslen = map(compile1, args), length(args)
-    if v isa Name
-      :($(Runtime.app)($(v.v), $(args...)))
-    elseif v isa Lit
-      @assert false "not implemented $v"
-    elseif v.type===:verb
-      hasav = length(v.body) > 1
-      f = get(verbs, (v.body[1].v, hasav ? 2 : argslen), nothing)
-      @assert f !== nothing "missing verb implementation:\n$v"
-      for i in 2:length(v.body)
-        av = get(adverbs, (v.body[i].v, argslen), nothing)
-        @assert av !== nothing "missing adverb implementation"
-        f = av(f)
-      end
-      :($f($(args...)))
-    elseif v.type===:fun
-      f = eval(compile1(v)) # allows to eval Runtime.papp now
-      alen = Runtime.arity(f)
-      if alen == argslen
-        :($f($(args...)))
-      elseif alen > argslen
-        :($(Runtime.papp)($f, $(tuple(args)), $(alen - argslen)))
-      else
-        @assert false "invalid arity"
-      end
-    elseif v.type===:app
-      f = compile1(v)
-      :($(Runtime.app)($(f), $(args...)))
-    else
-      @assert false "not implemented $v"
+    f, arity, args... = syn.body
+    args = map(compile1, args)
+    if f.type===:verb
+      @assert arity.v == 1 || arity.v === 2
+      f = compilefun(f, arity.v)
+      compileapp(f, args)
+    elseif f.type===:fun
+      @assert arity.v === length(args)
+      f = eval(compile1(f)) # as this is a function, we can eval it now
+      compileapp(f, args)
+    else # generic case
+      @assert arity.v === length(args)
+      f = compile1(f)
+      compileapp(f, args)
     end
   elseif syn.type === :fun
     x,y,z=implicitargs(syn.body)
@@ -505,17 +504,67 @@ function compile1(syn::Syntax)
       :(() -> $(body...))
     end
   elseif syn.type===:verb
-    @assert length(syn.body) === 1 && syn.body[1] isa Name
-    v = syn.body[1].v
-    f = get(verbs, (v, 2), nothing)
-    @assert f !== nothing "missing verb implementation"
+    hasavs = length(syn.body) > 1
+    prefer_arity = hasavs ? 1 : 2
+    :($(compilefun(syn, prefer_arity)))
+  end
+
+compile1(syn::Name) =
+  :($(syn.v))
+
+compile1(syn::Lit) =
+  :($(syn.v))
+
+compile1(syn::Prim) =
+  :($(compilefun(syn, 2)))
+
+compileapp(f, args) =
+  :($(Runtime.app)($(f), $(args...)))
+
+compileapp(f, args, arity) =
+  let alen = length(args)
+    if arity == alen
+      :($f($(args...)))
+    elseif arity > alen
+      :($(Runtime.papp)($f, $(tuple(args...)), $(arity - alen)))
+    else
+      @assert false "invalid arity"
+    end
+  end
+
+compileapp(f::Union{Function,Runtime.PFunction}, args) =
+  compileapp(f, args, Runtime.arity(f))
+
+compilefun(syn::Prim, prefer_arity::Int64) =
+  begin
+    f = get(verbs, (syn.v, prefer_arity), nothing)
+    @assert f !== nothing "primitive is not implemented: $(syn.v) ($prefer_arity arity)"
     f
   end
-end
+compilefun(syn::Node, prefer_arity::Int64) =
+  if syn.type===:verb
+    f, avs... = syn.body
+    f = compilefun(f, isempty(avs) ? prefer_arity : 2)
+    for av in avs
+      @assert av isa Prim
+      makef = get(adverbs, (av.v, prefer_arity), nothing)
+      @assert makef !== nothing "primitive is not implemented: $(av.v) ($prefer_arity arity)"
+      if f isa Expr
+        f = :($makef($f))
+      else
+        f = makef(f)
+      end
+    end
+    f
+  else
+    compile1(syn)
+  end
 
 implicitargs(syn::Name) =
   syn.v===:x,syn.v===:y,syn.v===:z
 implicitargs(syn::Lit) =
+  false,false,false
+implicitargs(syn::Prim) =
   false,false,false
 implicitargs(syn::Node) =
   if syn.type === :fun; false,false,false
