@@ -25,6 +25,7 @@ rbracket = re"\]"
 lbrace   = re"{"
 rbrace   = re"}"
 space    = re" +"
+newline  = re"\n+"
 semi     = re";"
 
 tokenizer = Automa.compile(
@@ -42,6 +43,7 @@ tokenizer = Automa.compile(
   rbrace   => :(emit(:rbrace)),
   semi     => :(emit(:semi)),
   space    => :(),
+  newline  => :(emit(:newline)),
 )
 
 context = Automa.CodeGenContext()
@@ -142,7 +144,8 @@ function exprs(ctx::ParseContext)
     if e !== nothing
       push!(es, e)
     end
-    if peek(ctx) === :semi
+    next = peek(ctx)
+    if next===:semi||next===:newline
       consume!(ctx)
     else
       return es
