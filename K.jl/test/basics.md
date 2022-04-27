@@ -205,6 +205,20 @@ is on the right side:
     julia> k"(1+)2"
     3
 
+There's a special verb `:x` which interrupt execution flow and returns `x` as
+value of an expression being evaluated. This works at top level:
+
+    julia> k":1"
+    1
+
+    julia> k":1;2"
+    1
+
+and inside user defined functions:
+
+    julia> k"{:x+1;x+2}[1]"
+    2
+
 ## Adverbs
 
 K has adverbs (higher-order functions), for example `f/` makes a left fold with

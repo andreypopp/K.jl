@@ -295,22 +295,22 @@ Base.show(io::IO, s::PFunction) = print(io, "*$(s.arity)-kfun*")
 
 arity(f::Function) =
   begin
-    monad,dyad,arity = false,false,0
+    monad,dyad,arity = false,false,-1
     for m in methods(f)
       marity = m.nargs - 1
       monad,dyad = monad||marity===1,dyad||marity===2
-      if marity>2
-        @assert arity==0 || arity==marity
+      if marity>2||marity<1
+        @assert arity==-1 || arity==marity "invalid arity"
         arity = marity
       end
     end
-        if dyad       &&arity!=0; @assert false
-    elseif       monad&&arity!=0; @assert false
-    elseif dyad&&monad          ; [1,2]
-    elseif dyad                 ; [2]
-    elseif       monad          ; [1]
-    elseif              arity!=0; [arity]
-    else                        ; @assert false
+        if dyad       &&arity!=-1; @assert false "invalid arity"
+    elseif       monad&&arity!=-1; @assert false "invalid arity"
+    elseif dyad&&monad           ; [1,2]
+    elseif dyad                  ; [2]
+    elseif       monad           ; [1]
+    elseif              arity!=-1; [arity]
+    else                         ; @assert false "invalid arity"
     end
   end
 arity(f::PFunction) = [f.arity]
@@ -473,7 +473,7 @@ null(::Type{Any}) = []
 end
 
 module Compile
-import ..Parse: Syntax, Node, Lit, Name, Prim
+import ..Parse: Syntax, Node, Lit, Name, Prim, parse
 import ..Runtime
 
 verbs = Dict(
@@ -492,10 +492,10 @@ adverbs = Dict(
                :(/) => Runtime.kfold,
               )
 
-function compile(syn::Node)
-  es = map(compile1, syn.body)
-  quote $(es...) end
-end
+compile(syn::Node) =
+  quote $(map(compile1, syn.body)...) end
+compile(str::String) =
+  compile(parse(str))
 
 compile1(syn::Node) =
   if syn.type === :seq
@@ -507,8 +507,15 @@ compile1(syn::Node) =
     if f isa Node && f.type===:verb && length(f.body)===1 &&
         f.body[1] isa Prim && f.body[1].v===:(:) &&
         arity.v==2 && args[1] isa Symbol
+      # assignment `n:x`
       name,rhs=args[1],args[2]
       :($name = $rhs)
+    elseif f isa Node && f.type===:verb && length(f.body)===1 &&
+        f.body[1] isa Prim && f.body[1].v===:(:) &&
+        arity.v==1
+      # return `:x`
+      rhs=args[1]
+      :(return $rhs)
     elseif f isa Node && f.type===:verb
       @assert arity.v == 1 || arity.v === 2
       f = compilefun(f, arity.v)
