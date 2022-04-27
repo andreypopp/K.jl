@@ -285,13 +285,32 @@ module Runtime
 struct PFunction
   f::Function
   args::Tuple
-  arity::Int64
+  arity::Int
 end
 (s::PFunction)(args...) = s.f(s.args..., args...)
 Base.show(io::IO, s::PFunction) = print(io, "*$(s.arity)-kfun*")
 
-arity(f::Function) = methods(f)[1].nargs - 1
-arity(f::PFunction) = f.arity
+arity(f::Function) =
+  begin
+    monad,dyad,arity = false,false,0
+    for m in methods(f)
+      marity = m.nargs - 1
+      monad,dyad = monad||marity===1,dyad||marity===2
+      if marity>2
+        @assert arity==0 || arity==marity
+        arity = marity
+      end
+    end
+        if dyad       &&arity!=0; @assert false
+    elseif       monad&&arity!=0; @assert false
+    elseif dyad&&monad          ; [1,2]
+    elseif dyad                 ; [2]
+    elseif       monad          ; [1]
+    elseif              arity!=0; [arity]
+    else                        ; @assert false
+    end
+  end
+arity(f::PFunction) = [f.arity]
 
 papp(f::Function, args, narr) =
   PFunction(f, args, narr)
@@ -301,8 +320,8 @@ papp(f::PFunction, args, narr) =
 app(f::Union{Function, PFunction}, args...) =
   begin
     flen, alen = arity(f), length(args)
-    if flen === alen; f(args...)
-    elseif flen > alen; papp(f, args, flen - alen)
+    if alen in flen; f(args...)
+    elseif flen[1] > alen; papp(f, args, flen[1] - alen)
     else; @assert false "arity error"
     end
   end
@@ -432,6 +451,11 @@ kfoldM(@nospecialize(f)) = (x) ->
 kfoldD(@nospecialize(f)) = (x, y) ->
   foldl(f, y, init=x)
 
+function kfold(f)
+  kfoldf(x) = isempty(x) ? identity(f) : foldl(f, x)
+  kfoldf(x, y) = foldl(f, y, init=x)
+end
+
 identity(f) =
   if f === kadd; 0
   else; ""
@@ -462,8 +486,7 @@ verbs = Dict(
             )
 
 adverbs = Dict(
-               (:(/), 1) => Runtime.kfoldM,
-               (:(/), 2) => Runtime.kfoldD,
+               :(/) => Runtime.kfold,
               )
 
 function compile(syn::Node)
@@ -528,10 +551,10 @@ compileapp(f, args) =
 
 compileapp(f, args, arity) =
   let alen = length(args)
-    if arity == alen
+    if alen in arity
       :($f($(args...)))
-    elseif arity > alen
-      :($(Runtime.papp)($f, $(tuple(args...)), $(arity - alen)))
+    elseif alen < arity[1]
+      :($(Runtime.papp)($f, $(tuple(args...)), $(arity[1] - alen)))
     else
       @assert false "invalid arity"
     end
@@ -552,8 +575,8 @@ compilefun(syn::Node, prefer_arity::Int64) =
     f = compilefun(f, isempty(avs) ? prefer_arity : 2)
     for av in avs
       @assert av isa Prim
-      makef = get(adverbs, (av.v, prefer_arity), nothing)
-      @assert makef !== nothing "primitive is not implemented: $(av.v) ($prefer_arity arity)"
+      makef = get(adverbs, av.v, nothing)
+      @assert makef !== nothing "primitive is not implemented: $(av.v)"
       if f isa Expr
         f = :($makef($f))
       else
