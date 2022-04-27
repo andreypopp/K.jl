@@ -313,7 +313,7 @@ app(f::Union{Function, PFunction}, args...) =
 kself(x) = x
 
 # : right
-kright(x, y) = y
+kright(x, y) = x
 
 # + x
 kflip(x) = [[x]]
@@ -478,11 +478,16 @@ compile1(syn::Node) =
   elseif syn.type === :app
     f, arity, args... = syn.body
     args = map(compile1, args)
-    if f.type===:verb
+    if f isa Node && f.type===:verb && length(f.body)===1 &&
+        f.body[1] isa Prim && f.body[1].v===:(:) &&
+        arity.v==2 && args[1] isa Symbol
+      name,rhs=args[1],args[2]
+      :($name = $rhs)
+    elseif f isa Node && f.type===:verb
       @assert arity.v == 1 || arity.v === 2
       f = compilefun(f, arity.v)
       compileapp(f, args)
-    elseif f.type===:fun
+    elseif f isa Node && f.type===:fun
       @assert arity.v === length(args)
       f = eval(compile1(f)) # as this is a function, we can eval it now
       compileapp(f, args)
