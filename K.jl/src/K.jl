@@ -624,16 +624,22 @@ k(k::String) =
   end
 
 module Repl
-using ReplMaker
+using ReplMaker, REPL
 
-import ..k
+import ..k, ..parse
 
 function init()
   # show_function(io::IO, mime::MIME"text/plain", x) = print(io, x)
+  function valid_input_checker(ps::REPL.LineEdit.PromptState)
+    s = REPL.LineEdit.input_string(ps)
+    try; parse(s); true
+    catch e; false end
+  end
   initrepl(k,
            prompt_text="k) ",
            prompt_color=:blue, 
            # show_function=show_function,
+           valid_input_checker=valid_input_checker,
            startup_text=true,
            start_key=')', 
            mode_name="k")

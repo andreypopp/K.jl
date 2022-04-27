@@ -55,7 +55,7 @@ uuid = "aa1ae85d-cabe-5617-a682-6adf51b2e16a"
 version = "0.9.13"
 
 [[deps.K]]
-deps = ["AbstractTrees", "Automa", "NarrativeTest", "ReplMaker", "Test"]
+deps = ["AbstractTrees", "Automa", "NarrativeTest", "REPL", "ReplMaker", "Test"]
 path = "K.jl"
 uuid = "0e651bef-d0e7-4b42-b08d-2a7a2dfec234"
 version = "0.1.0"
