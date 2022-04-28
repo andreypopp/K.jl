@@ -260,6 +260,25 @@ function number(ctx::ParseContext)
   syn
 end
 
+function symbol0(ctx)
+  tok, value = consume!(ctx)
+  Lit(Symbol(value[2:end]))
+end
+
+function symbol(ctx::ParseContext)
+  syn = symbol0(ctx)
+  next = peek(ctx)
+  if next === :symbol
+    syn = Node(:seq, [syn])
+    while true
+      push!(syn.body, symbol0(ctx))
+      next = peek(ctx)
+      next === :symbol || break
+    end
+  end
+  syn
+end
+
 function term(ctx::ParseContext)
   next = peek(ctx)
   t = 
@@ -270,8 +289,11 @@ function term(ctx::ParseContext)
       _, value = consume!(ctx)
       maybe_adverb(Name(value), ctx)
     elseif next === :int || next === :float
-      lit = number(ctx)
-      maybe_adverb(lit, ctx)
+      syn = number(ctx)
+      maybe_adverb(syn, ctx)
+    elseif next === :symbol
+      syn = symbol(ctx)
+      maybe_adverb(syn, ctx)
     elseif next === :bitmask
       _, value = consume!(ctx)
       value = Lit.(Base.parse.(Int64, collect(value[1:end-1])))
@@ -280,9 +302,6 @@ function term(ctx::ParseContext)
     elseif next === :str
       _, value = consume!(ctx)
       maybe_adverb(Lit(value), ctx)
-    elseif next === :symbol
-      _, value = consume!(ctx)
-      maybe_adverb(Lit(Symbol(value)), ctx)
     elseif next === :lbrace
       consume!(ctx)
       es = exprs(ctx)
@@ -654,8 +673,10 @@ compile1(syn::Lit) =
   if syn.v isa String
     v = length(syn.v) == 1 ? syn.v[1] : collect(syn.v)
     :($v)
+  elseif syn.v isa Symbol
+    Meta.quot(syn.v)
   else
-    :($(syn.v))
+    syn.v
   end
 
 compile1(syn::Prim) =
