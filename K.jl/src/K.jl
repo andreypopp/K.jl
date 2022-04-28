@@ -404,10 +404,9 @@ kmul(x, y::Vector) = kmul.(x, y)
 kmul(x::Vector, y::Vector) =
   (@assert length(x) == length(y); kmul.(x, y))
 
-# % x
-# TODO: ...
-ksqrt(x::Float64) = sqrt(x)
-ksqrt(x::Vector{Float64}) = sqrt.(x)
+# %N square root
+ksqrt(x) = x<0 ? -0.0 : sqrt(x)
+ksqrt(x::Vector) = ksqrt.(x)
 
 # x % y
 kdiv(x, y) = x / y
@@ -526,10 +525,12 @@ verbs = Dict(
              (:(:), 2) => Runtime.kright,
              (:+, 1) => Runtime.kflip,
              (:+, 2) => Runtime.kadd,
-             (:*, 1) => Runtime.kfirst,
-             (:*, 2) => Runtime.kmul,
              (:-, 1) => Runtime.kneg,
              (:-, 2) => Runtime.ksub,
+             (:*, 1) => Runtime.kfirst,
+             (:*, 2) => Runtime.kmul,
+             (:%, 1) => Runtime.ksqrt,
+             (:%, 2) => Runtime.kdiv,
              (:(!), 1) => Runtime.kenum,
             )
 
