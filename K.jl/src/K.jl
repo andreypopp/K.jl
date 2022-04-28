@@ -329,6 +329,9 @@ app(f::Union{Function, PFunction}, args...) =
     end
   end
 
+replicate(v, n) =
+  reduce(vcat, fill.(v, n))
+
 # verbs
 
 # :: x
@@ -393,12 +396,34 @@ kdiv(x, y::Vector) = kdiv.(x, y)
 kdiv(x::Vector, y::Vector) =
   (@assert length(x) == length(y); kdiv.(x, y))
 
-# ! i
-# TODO: maybe remove collect?
-kenum(x::Int64) = collect(x < 0 ? (-x:0) : (0:(x - 1)))
+# ! i enum
+kenum(x::Int64) =
+  collect(x < 0 ? (x:-1) : (0:(x - 1)))
 
-# ! I
-kenum(x) = @assert false "not implemented"
+# ! I odometer
+kenum(x::Vector) =
+  begin
+    rown = length(x)
+    if rown==0; Any[]
+    elseif rown==1; [collect(0:x[1]-1)]
+    else
+      coln = prod(x)
+      if coln==0
+        [Int64[] for _ in 1:rown]
+      else
+        o = Vector{Vector{Int64}}(undef, rown)
+        repn = 1
+        for (rowi, n) in enumerate(x)
+          row = 0:n-1
+          row = replicate(row, coln ÷ n ÷ repn)
+          row = repeat(row, repn)
+          o[rowi] = row
+          repn = repn * n
+        end
+        o
+      end
+    end
+  end
 
 kkeys(x) = @assert false "not implemented"
 knskeys(x) = @assert false "not implemented"

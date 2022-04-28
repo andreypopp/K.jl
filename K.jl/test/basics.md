@@ -162,6 +162,18 @@ arity 1, 2 or 3 correspondingly):
     julia> k"{x+y+z}[1;2;3]"
     6
 
+Functions which mention no implicit arguments `x`, `y` or `z` by have arity 0:
+
+    julia> k"{1+2}"
+    … (generic function with 1 method)
+
+    julia> k"{1+2}[]"
+    3
+
+    julia> k"{1+2}[1]"
+    ERROR: LoadError: AssertionError: invalid arity
+    ⋮
+
 Note that 2-arity functions are not dyadic and thus they cannot be called using
 infix form.
 
