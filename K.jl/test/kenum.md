@@ -1,4 +1,4 @@
-# enum / odometer
+# kenum
 
 `!i` produces a list of integers of length `i` starting from `0`:
 

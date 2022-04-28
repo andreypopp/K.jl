@@ -14,8 +14,8 @@ verb     = verb1 | re.cat(verb1, colon)
 name     = re"[a-zA-Z]+[a-zA-Z0-9]*"
 backq    = re"`"
 symbol   = backq | re.cat(backq, name)
-int      = re"[-]?[0-9]+"
-float0   = re"[-]?[0-9]+\.[0-9]*"
+int      = re"\-?[0-9]+"
+float0   = re"\-?[0-9]+\.[0-9]*"
 exp      = re"[eE][-+]?[0-9]+"
 float    = float0 | re.cat(float0 | int, exp)
 lparen   = re"\("
@@ -29,8 +29,8 @@ newline  = re"\n+"
 semi     = re";"
 
 tokenizer = Automa.compile(
-  float    => :(emit(:float)),
-  int      => :(emit(:int)),
+  float    => :(emitnumber(:float)),
+  int      => :(emitnumber(:int)),
   name     => :(emit(:name)),
   symbol   => :(emit(:symbol)),
   verb     => :(emit(:verb)),
@@ -42,7 +42,7 @@ tokenizer = Automa.compile(
   lbrace   => :(emit(:lbrace)),
   rbrace   => :(emit(:rbrace)),
   semi     => :(emit(:semi)),
-  space    => :(),
+  space    => :(markspace()),
   newline  => :(emit(:newline)),
 )
 
@@ -50,11 +50,31 @@ context = Automa.CodeGenContext()
 
 Token = Tuple{Symbol,String}
 
+keepneg(tok) =
+  tok===:adverb||
+  tok===:verb||
+  tok===:lparen||
+  tok===:lbracket||
+  tok===:lbrace||
+  tok===:lsemi||
+  tok===:newline
+
 @eval function tokenize(data::String)::Vector{Token}
   $(Automa.generate_init_code(context, tokenizer))
   p_end = p_eof = sizeof(data)
   toks = Token[]
+  space = nothing
+  markspace() = space = te
   emit(kind) = push!(toks, (kind, data[ts:te]))
+  emitnumber(kind) = begin
+    num = data[ts:te]
+    if num[1]=='-' && space!=(ts-1) && !isempty(toks) && !keepneg(toks[end][1])
+      push!(toks, (:verb, "-"))
+      push!(toks, (kind, num[2:end]))
+    else
+      push!(toks, (kind, num))
+    end
+  end
   while p ≤ p_eof && cs > 0
     $(Automa.generate_exec_code(context, tokenizer))
   end

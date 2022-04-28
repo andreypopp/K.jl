@@ -1,4 +1,4 @@
-# flip +
+# kflip
 
     julia> using K
 
