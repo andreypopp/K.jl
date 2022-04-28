@@ -451,8 +451,26 @@ kmod(x::Int64, y::Vector) =
   kmod.(x, y)
 
 # &I where
-kwhere(x) =
-  @assert false "not implemented"
+kwhere(x::Int64) = fill(0, x)
+kwhere(x::Vector{Int64}) = replicate(0:length(x)-1, x)
+
+# N&N min/and
+kand(x, y) = min(x, y)
+kand(x::Vector, y) = kand.(x, y)
+kand(x, y::Vector) = kand.(x, y)
+kand(x::Vector, y::Vector) =
+  (@assert length(x) == length(y); kand.(x, y))
+
+# |x reverse
+krev(x) = x
+krev(x::Vector) = reverse(x)
+
+# N|N max/or
+kor(x, y) = max(x, y)
+kor(x::Vector, y) = kor.(x, y)
+kor(x, y::Vector) = kor.(x, y)
+kor(x::Vector, y::Vector) =
+  (@assert length(x) == length(y); kor.(x, y))
 
 # adverbs
 
@@ -510,6 +528,10 @@ verbs = Dict(
              (:%, 2) => Runtime.kdiv,
              (:(!), 1) => Runtime.kenum,
              (:(!), 2) => Runtime.kmod,
+             (:(&), 1) => Runtime.kwhere,
+             (:(&), 2) => Runtime.kand,
+             (:(|), 1) => Runtime.krev,
+             (:(|), 2) => Runtime.kor,
             )
 
 adverbs = Dict(
