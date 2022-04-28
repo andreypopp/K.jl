@@ -20,9 +20,38 @@ Integers:
     Node(seq)
     └─ Lit(-42)
 
+Int null:
+
     julia> K.parse("0N")
     Node(seq)
     └─ Lit(-9223372036854775808)
+
+    julia> K.parse("1b")
+    Node(seq)
+    └─ Lit(1)
+
+Bit masks:
+
+    julia> K.parse("0b")
+    Node(seq)
+    └─ Lit(0)
+
+    julia> K.parse("101b")
+    Node(seq)
+    └─ Node(seq)
+       ├─ Lit(1)
+       ├─ Lit(0)
+       └─ Lit(1)
+
+Negative bitmasks are not supported and instead this parses as application of
+`-101` to `b` (this is consistent with ngn/k):
+
+    julia> K.parse("-101b")
+    Node(seq)
+    └─ Node(app)
+       ├─ Lit(-101)
+       ├─ Lit(1)
+       └─ Name(:b)
 
 Floats:
 

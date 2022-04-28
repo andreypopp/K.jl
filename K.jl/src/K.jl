@@ -15,6 +15,7 @@ name     = re"[a-zA-Z]+[a-zA-Z0-9]*"
 backq    = re"`"
 symbol   = backq | (backq * name)
 int      = re"0N" | re"\-?[0-9]+"
+bitmask  = re"[01]+b"
 float0   = re"\-?[0-9]+\.[0-9]*"
 exp      = re"[eE][-+]?[0-9]+"
 float    = re"0n" | re"0w" | re"-0w" | float0 | ((float0 | int) * exp)
@@ -32,6 +33,7 @@ semi     = re";"
 tokenizer = Automa.compile(
   float    => :(emitnumber(:float)),
   int      => :(emitnumber(:int)),
+  bitmask  => :(emitnumber(:bitmask)),
   name     => :(emit(:name)),
   symbol   => :(emit(:symbol)),
   verb     => :(emit(:verb)),
@@ -270,6 +272,11 @@ function term(ctx::ParseContext)
     elseif next === :int || next === :float
       lit = number(ctx)
       maybe_adverb(lit, ctx)
+    elseif next === :bitmask
+      _, value = consume!(ctx)
+      value = Lit.(Base.parse.(Int64, collect(value[1:end-1])))
+      syn = length(value) == 1 ? value[1] : Node(:seq, value)
+      maybe_adverb(syn, ctx)
     elseif next === :str
       _, value = consume!(ctx)
       maybe_adverb(Lit(value), ctx)
