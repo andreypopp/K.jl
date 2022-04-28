@@ -108,13 +108,11 @@ expressions:
     julia> k"(2*2)+2"
     6
 
-## Verbs / Functions
+## Verbs & Functions
 
-K calls functions verbs. There are built-in verbs and user-defined verbs.
-
-K built-in verbs can be monadic (accept a single argument, prefix form) or
-dyadic (accept two arguments, infix form), there are some exceptions but later
-on them.
+K has verbs & functions. Verbs are primitive function values built into the
+language, there are monadic verbs (accept a single argument) and dyadic verbs
+(accept two arguments and **can be called infix**).
 
 Let's explore using monadic verbs first:
 
@@ -123,18 +121,19 @@ Let's explore using monadic verbs first:
      [1, 3]
      [2, 4]
 
-This was flip verb which transposes a list.
+This was `flip` which transposes a list.
 
 Now the same `+` symbol can be used as a dyadic verb, in this case it means
-addition:
+`add` and performs addition:
 
     julia> k"10+(1 2; 3 4)"
     2-element Vector{Vector{Int64}}:
      [11, 12]
      [13, 14]
 
-There's another syntax to call a function `f[a1;a2;..;an]`. This works both for
-monadic and dyadic verbs (and other arities):
+There's another syntax to call a function `f[a1;a2;..;an]`. This works for
+monadic, dyadic verbs and other functions of any arity. Let's call `flip` and
+`add` using this syntax:
 
     julia> k"+[(1 2; 3 4)]"
     2-element Vector{Any}:
@@ -162,10 +161,13 @@ arity 1, 2 or 3 correspondingly):
     julia> k"{x+y+z}[1;2;3]"
     6
 
-Functions which mention no implicit arguments `x`, `y` or `z` have arity 1:
+Functions which mention no implicit argument (`x`, `y` or `z`) have arity 1:
 
     julia> k"{1+2}"
     … (generic function with 1 method)
+
+    julia> k"{1+2}[42]"
+    3
 
     julia> k"{1+2}[]"
     3
@@ -175,8 +177,8 @@ Note that `f[]` means `f[::]` (calling `f` with an `::` (self) as argument):
     julia> k"{x 42}[]"
     42
 
-Note that 2-arity functions are not dyadic and thus they cannot be called using
-infix form.
+Note that user-defined functions canot be called infix, even if they have
+2-arity:
 
     julia> k"1{x+y}2"
     ERROR: …
@@ -194,7 +196,7 @@ It is an error to supply extra arguments to a function:
     ERROR: LoadError: AssertionError: invalid arity
     ⋮
 
-But it is possible to supply less arguments than the function expects, in this
+But it is possible to supply less arguments than the function's arity, in this
 case a new partially applied function is returned:
 
     julia> k"{x+y+z}[1]"
@@ -213,13 +215,13 @@ case a new partially applied function is returned:
     6
 
 Partial application is also possible with dyadic verbs if the supplied argument
-is on the right side:
+is on the left side:
 
     julia> k"(1+)2"
     3
 
-There's a special verb `:x` which interrupt execution flow and returns `x` as
-value of an expression being evaluated. This works at top level:
+There's a special monadic verb `:x` which interrupt execution flow and returns
+`x` as value of an expression being evaluated. This works at top level:
 
     julia> k":1"
     1
@@ -240,7 +242,11 @@ K has adverbs (higher-order functions), for example `f/` makes a left fold with
     julia> k"+/1 2 3"
     6
 
-Note that `f` in `f/` can be any expression which evaluates to a function:
+Note that `+/` reads "fold with addition" and not "fold with flip" (both `flip`
+and `add` correspond to `+` symbol). The use of adverb picks the dyadic version
+of a verb.
+
+Observe that `f` in `f/` can be any expression which evaluates to a function:
 
     julia> k"(+)/1 2 3"
     6
@@ -248,8 +254,8 @@ Note that `f` in `f/` can be any expression which evaluates to a function:
     julia> k"{x+y}/1 2 3"
     6
 
-Adverbs can have dyadic form as well, in case of `+/` it is a left fold with a
-seed value:
+Adverbs can have a dyadic form as well, in case of `+/` it is a "left fold with
+seed":
 
     julia> k"1+/1 2 3"
     7
