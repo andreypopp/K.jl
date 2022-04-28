@@ -444,10 +444,14 @@ kenum(x::Vector) =
     end
   end
 
+kmod(x::Int64, y) =
+  x==0 ? y : x<0 ? Int(div(y,-x,RoundDown)) : rem(y,x,RoundDown)
+kmod(x::Int64, y::Vector) =
+  kmod.(x, y)
+
 kkeys(x) = @assert false "not implemented"
 knskeys(x) = @assert false "not implemented"
 kdict(x, y) = @assert false "not implemented"
-kmod(x, y) = @assert false "not implemented"
 kwhere(x) = @assert false "not implemented"
 kdeepwhere(x) = @assert false "not implemented"
 kmin(x, y) = @assert false "not implemented"
@@ -532,6 +536,7 @@ verbs = Dict(
              (:%, 1) => Runtime.ksqrt,
              (:%, 2) => Runtime.kdiv,
              (:(!), 1) => Runtime.kenum,
+             (:(!), 2) => Runtime.kmod,
             )
 
 adverbs = Dict(
