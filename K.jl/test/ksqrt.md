@@ -38,3 +38,13 @@
      -0.0
       2.0
      -0.0
+
+Chars are converted to ints (and string being lists of chars to lists of ints):
+
+    julia> k"%\"0\""
+    6.928203230275509
+    
+    julia> k"%\"01\""
+    2-element Vector{Float64}:
+     6.928203230275509
+     7.0

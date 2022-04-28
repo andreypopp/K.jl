@@ -23,3 +23,13 @@
     2-element Vector{Vector{Int64}}:
      [-1, -2]
      [-3, -4]
+
+Chars are converted to ints (and string being lists of chars to lists of ints):
+
+    julia> k"-\"0\""
+    -48
+    
+    julia> k"-\"01\""
+    2-element Vector{Int64}:
+     -48
+     -49

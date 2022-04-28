@@ -31,3 +31,23 @@
     ERROR: LoadError: AssertionError: length(x) == length(y)
     ⋮
 
+Chars are converted to ints (and string being lists of chars to lists of ints):
+
+    julia> k"\"0\"*2"
+    96
+    
+    julia> k"2*\"0\""
+    96
+
+    julia> k"\"0\"*\"0\""
+    2304
+    
+    julia> k"\"01\"*2"
+    2-element Vector{Int64}:
+     96
+     98
+    
+    julia> k"2*\"01\""
+    2-element Vector{Int64}:
+     96
+     98

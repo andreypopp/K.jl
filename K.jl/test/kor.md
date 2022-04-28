@@ -44,3 +44,24 @@
     julia> k"1 2|1 2 3"
     ERROR: LoadError: AssertionError: length(x) == length(y)
     ⋮
+
+Chars are converted to ints (and string being lists of chars to lists of ints):
+
+    julia> k"\"0\"|2"
+    48
+    
+    julia> k"2|\"0\""
+    48
+    
+    julia> k"\"1\"|\"0\""
+    49
+    
+    julia> k"\"01\"|2"
+    2-element Vector{Int64}:
+     48
+     49
+    
+    julia> k"2|\"01\""
+    2-element Vector{Int64}:
+     48
+     49

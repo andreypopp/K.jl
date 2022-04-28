@@ -10,14 +10,15 @@ re = Automa.RegExp
 colon    = re":"
 adverb   = re"'" | re"/" | re"\\" | re"':" | re"/:" | re"\\:"
 verb1    = colon | re"[\+\-*%!&\|<>=~,^#_\\$?@\.]"
-verb     = verb1 | re.cat(verb1, colon)
+verb     = verb1 | (verb1 * colon)
 name     = re"[a-zA-Z]+[a-zA-Z0-9]*"
 backq    = re"`"
-symbol   = backq | re.cat(backq, name)
-int      = re"\-?[0-9]+"
+symbol   = backq | (backq * name)
+int      = re"0N" | re"\-?[0-9]+"
 float0   = re"\-?[0-9]+\.[0-9]*"
 exp      = re"[eE][-+]?[0-9]+"
-float    = float0 | re.cat(float0 | int, exp)
+float    = re"0n" | re"0w" | re"-0w" | float0 | ((float0 | int) * exp)
+str      = re.cat('"', re.rep(re"[^\"]" | re.cat("\\\"")), '"')
 lparen   = re"\("
 rparen   = re"\)"
 lbracket = re"\["
@@ -42,6 +43,7 @@ tokenizer = Automa.compile(
   lbrace   => :(emit(:lbrace)),
   rbrace   => :(emit(:rbrace)),
   semi     => :(emit(:semi)),
+  str      => :(emitstr()),
   space    => :(markspace()),
   newline  => :(emit(:newline)),
 )
@@ -64,26 +66,34 @@ keepneg(tok) =
   p_end = p_eof = sizeof(data)
   toks = Token[]
   space = nothing
-  markspace() = space = te
+  markspace() = (space = te)
   emit(kind) = push!(toks, (kind, data[ts:te]))
-  emitnumber(kind) = begin
-    num = data[ts:te]
-    if num[1]=='-' && space!=(ts-1) && !isempty(toks) && !keepneg(toks[end][1])
-      push!(toks, (:verb, "-"))
-      push!(toks, (kind, num[2:end]))
-    else
-      push!(toks, (kind, num))
+  emitstr() = push!(toks, (:str, data[ts+1:te-1]))
+  emitnumber(kind) =
+    begin
+      num = data[ts:te]
+      if num[1]=='-' && space!=(ts-1) && !isempty(toks) && !keepneg(toks[end][1])
+        push!(toks, (:verb, "-"))
+        push!(toks, (kind, num[2:end]))
+      else
+        push!(toks, (kind, num))
+      end
     end
-  end
   while p ≤ p_eof && cs > 0
     $(Automa.generate_exec_code(context, tokenizer))
   end
-  if cs < 0; error("failed to tokenize") end
+  if cs < 0 || te < ts
+    error("failed to tokenize")
+  end
   push!(toks, (:eof, "␀"))
   return toks
 end
 
 end
+
+int_null = typemin(Int64)
+float_null = NaN
+any_null = []
 
 module Parse
 import ..Tokenize: Token
@@ -96,7 +106,7 @@ struct Node <: Syntax
 end
 
 struct Lit <: Syntax
-  v::Union{Int64,Float64,Symbol}
+  v::Union{Int64,Float64,Symbol,String}
 end
 
 struct Name <: Syntax
@@ -147,7 +157,7 @@ consume!(ctx::ParseContext) =
     tok
   end
 
-import ..Tokenize
+import ..Tokenize, ..int_null, ..float_null
 
 function parse(data::String)
   tokens = Tokenize.tokenize(data)
@@ -213,9 +223,21 @@ function number0(ctx::ParseContext)
   tok, value = consume!(ctx)
   value =
     if tok === :int
-      Base.parse(Int64, value)
+      if value=="0N"
+        int_null
+      else
+        Base.parse(Int64, value)
+      end
     elseif tok === :float
-      Base.parse(Float64, value)
+      if value=="0w"
+        Inf
+      elseif value=="-0w"
+        -Inf
+      elseif value=="0n"
+        float_null
+      else
+        Base.parse(Float64, value)
+      end
     else
       @assert false
     end
@@ -248,6 +270,9 @@ function term(ctx::ParseContext)
     elseif next === :int || next === :float
       lit = number(ctx)
       maybe_adverb(lit, ctx)
+    elseif next === :str
+      _, value = consume!(ctx)
+      maybe_adverb(Lit(value), ctx)
     elseif next === :symbol
       _, value = consume!(ctx)
       maybe_adverb(Lit(Symbol(value)), ctx)
@@ -304,6 +329,8 @@ end
 end
 
 module Runtime
+
+import ..int_null, ..float_null, ..any_null
 
 struct PFunction
   f::Function
@@ -377,17 +404,24 @@ kflip(x::Vector) =
 
 # x + y
 kadd(x, y) = x + y
+kadd(x::Char, y) = Int(x) + y
+kadd(x, y::Char) = x + Int(y)
+kadd(x::Char, y::Char) = Int(x) + Int(y)
 kadd(x, y::Vector) = kadd.(x, y)
 kadd(x::Vector, y) = kadd.(x, y)
 kadd(x::Vector, y::Vector) =
   (@assert length(x) == length(y); kadd.(x, y))
 
 # - x
-kneg(x::X) where {X<:Number} = -x
+kneg(x) = -x
+kneg(x::Char) = -Int(x)
 kneg(x::Vector) = kneg.(x)
 
 # x - y
 ksub(x, y) = x - y
+ksub(x::Char, y) = Int(x) - y
+ksub(x, y::Char) = x - Int(y)
+ksub(x::Char, y::Char) = Int(x) - Int(y)
 ksub(x::Vector, y) = ksub.(x, y)
 ksub(x, y::Vector) = ksub.(x, y)
 ksub(x::Vector, y::Vector) =
@@ -399,6 +433,9 @@ kfirst(x::Vector) = isempty(x) ? null(eltype(x)) : x[1]
 
 # x * y
 kmul(x, y) = x * y
+kmul(x::Char, y) = Int(x) * y
+kmul(x, y::Char) = x * Int(y)
+kmul(x::Char, y::Char) = Int(x) * Int(y)
 kmul(x::Vector, y) = kmul.(x, y)
 kmul(x, y::Vector) = kmul.(x, y)
 kmul(x::Vector, y::Vector) =
@@ -406,10 +443,14 @@ kmul(x::Vector, y::Vector) =
 
 # %N square root
 ksqrt(x) = x<0 ? -0.0 : sqrt(x)
+ksqrt(x::Char) = sqrt(Int(x))
 ksqrt(x::Vector) = ksqrt.(x)
 
 # x % y
 kdiv(x, y) = x / y
+kdiv(x::Char, y) = Int(x) / y
+kdiv(x, y::Char) = x / Int(y)
+kdiv(x::Char, y::Char) = Int(x) / Int(y)
 kdiv(x::Vector, y) = kdiv.(x, y)
 kdiv(x, y::Vector) = kdiv.(x, y)
 kdiv(x::Vector, y::Vector) =
@@ -447,6 +488,9 @@ kenum(x::Vector) =
 # i!N mod / div
 kmod(x::Int64, y) =
   x==0 ? y : x<0 ? Int(div(y,-x,RoundDown)) : rem(y,x,RoundDown)
+kmod(x::Int64, y::Char) = kmod(x, Int(y))
+kmod(x::Char, y::Int64) = kmod(Int(x), y)
+kmod(x::Char, y::Char) = kmod(Int(x), Int(y))
 kmod(x::Int64, y::Vector) =
   kmod.(x, y)
 
@@ -456,6 +500,9 @@ kwhere(x::Vector{Int64}) = replicate(0:length(x)-1, x)
 
 # N&N min/and
 kand(x, y) = min(x, y)
+kand(x::Char, y) = min(Int(x), y)
+kand(x, y::Char) = min(x, Int(y))
+kand(x::Char, y::Char) = min(Int(x), Int(y))
 kand(x::Vector, y) = kand.(x, y)
 kand(x, y::Vector) = kand.(x, y)
 kand(x::Vector, y::Vector) =
@@ -467,6 +514,9 @@ krev(x::Vector) = reverse(x)
 
 # N|N max/or
 kor(x, y) = max(x, y)
+kor(x::Char, y) = max(Int(x), y)
+kor(x, y::Char) = max(x, Int(y))
+kor(x::Char, y::Char) = max(Int(x), Int(y))
 kor(x::Vector, y) = kor.(x, y)
 kor(x, y::Vector) = kor.(x, y)
 kor(x::Vector, y::Vector) =
@@ -498,10 +548,6 @@ identity(f) =
   if f === kadd; 0
   else; ""
   end
-
-int_null = typemin(Int64)
-float_null = typemin(Int64)
-any_null = []
 
 null(::Type{Float64}) = float_null
 null(::Type{Int64}) = int_null
@@ -598,7 +644,12 @@ compile1(syn::Name) =
   :($(syn.v))
 
 compile1(syn::Lit) =
-  :($(syn.v))
+  if syn.v isa String
+    v = length(syn.v) == 1 ? syn.v[1] : collect(syn.v)
+    :($v)
+  else
+    :($(syn.v))
+  end
 
 compile1(syn::Prim) =
   :($(compilefun(syn, 2)))
@@ -668,6 +719,7 @@ implicitargs(syns::Vector{Syntax}) =
 
 end
 
+tokenize = Tokenize.tokenize
 parse = Parse.parse
 compile = Compile.compile
 

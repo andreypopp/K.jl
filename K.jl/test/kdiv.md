@@ -50,3 +50,24 @@ Division by `0` results in `Inf`:
     2-element Vector{Float64}:
       2.0
      Inf
+
+Chars are converted to ints (and string being lists of chars to lists of ints):
+
+    julia> k"\"0\"%2"
+    24.0
+    
+    julia> k"2%\"0\""
+    0.041666666666666664
+
+    julia> k"\"0\"%\"0\""
+    1.0
+    
+    julia> k"\"01\"%2"
+    2-element Vector{Float64}:
+     24.0
+     24.5
+    
+    julia> k"2%\"01\""
+    2-element Vector{Float64}:
+     0.041666666666666664
+     0.04081632653061224
