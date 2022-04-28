@@ -444,46 +444,15 @@ kenum(x::Vector) =
     end
   end
 
+# i!N mod / div
 kmod(x::Int64, y) =
   x==0 ? y : x<0 ? Int(div(y,-x,RoundDown)) : rem(y,x,RoundDown)
 kmod(x::Int64, y::Vector) =
   kmod.(x, y)
 
-kkeys(x) = @assert false "not implemented"
-knskeys(x) = @assert false "not implemented"
-kdict(x, y) = @assert false "not implemented"
-kwhere(x) = @assert false "not implemented"
-kdeepwhere(x) = @assert false "not implemented"
-kmin(x, y) = @assert false "not implemented"
-krev(x) = @assert false "not implemented"
-kmax(x, y) = @assert false "not implemented"
-kasc(x) = @assert false "not implemented"
-kdesc(x) = @assert false "not implemented"
-kless(x, y) = @assert false "not implemented"
-kmore(x, y) = @assert false "not implemented"
-kgroup(x) = @assert false "not implemented"
-keq(x, y) = @assert false "not implemented"
-knot(x) = @assert false "not implemented"
-kmatch(x, y) = @assert false "not implemented"
-kenlist(x) = @assert false "not implemented"
-kconcat(x, y) = @assert false "not implemented"
-kmerge(x, y) = @assert false "not implemented"
-knull(x) = @assert false "not implemented"
-kfill(x, y) = @assert false "not implemented"
-kwithout(x, y) = @assert false "not implemented"
-klen(x) = @assert false "not implemented"
-kreshape(x, y) = @assert false "not implemented"
-ktake(x, y) = @assert false "not implemented"
-kfloor(x) = @assert false "not implemented"
-kdrop(x, y) = @assert false "not implemented"
-kstr(x) = @assert false "not implemented"
-kpad(x, y) = @assert false "not implemented"
-kcast(x, y) = @assert false "not implemented"
-kuniq(x) = @assert false "not implemented"
-kfind(x, y) = @assert false "not implemented"
-ktype(x) = @assert false "not implemented"
-kget(x) = @assert false "not implemented"
-kappn(x, y) = @assert false "not implemented"
+# &I where
+kwhere(x) =
+  @assert false "not implemented"
 
 # adverbs
 
@@ -512,11 +481,15 @@ identity(f) =
   else; ""
   end
 
-null(::Type{Float64}) = 0.0
-null(::Type{Int64}) = 0
+int_null = typemin(Int64)
+float_null = typemin(Int64)
+any_null = []
+
+null(::Type{Float64}) = float_null
+null(::Type{Int64}) = int_null
 # See https://chat.stackexchange.com/transcript/message/58631508#58631508 for a
 # reasoning to return "" (an empty string).
-null(::Type{Any}) = []
+null(::Type{Any}) = any_null
 
 end
 

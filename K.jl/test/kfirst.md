@@ -29,4 +29,5 @@ In case a list is empty the "null" element is returned:
     Any[]
 
     julia> k"*!0"
-    0
+    -9223372036854775808
+
