@@ -260,7 +260,7 @@ function app(t, ctx::ParseContext)
     es = exprs(ctx)
     @assert peek(ctx) === :rbracket
     consume!(ctx)
-    t = Node(:app, [t, Lit(length(es)), es...])
+    t = Node(:app, [t, Lit(max(1, length(es))), es...])
   end
   t
 end
@@ -295,22 +295,22 @@ Base.show(io::IO, s::PFunction) = print(io, "*$(s.arity)-kfun*")
 
 arity(f::Function) =
   begin
-    monad,dyad,arity = false,false,-1
+    monad,dyad,arity = false,false,0
     for m in methods(f)
       marity = m.nargs - 1
-      monad,dyad = monad||marity===1,dyad||marity===2
-      if marity>2||marity<1
-        @assert arity==-1 || arity==marity "invalid arity"
+      monad,dyad = monad||marity==1,dyad||marity==2
+      if marity!=1&&marity!=2
+        @assert arity==0 || arity==marity "invalid arity"
         arity = marity
       end
     end
-        if dyad       &&arity!=-1; @assert false "invalid arity"
-    elseif       monad&&arity!=-1; @assert false "invalid arity"
-    elseif dyad&&monad           ; [1,2]
-    elseif dyad                  ; [2]
-    elseif       monad           ; [1]
-    elseif              arity!=-1; [arity]
-    else                         ; @assert false "invalid arity"
+        if dyad       &&arity!=0; @assert false "invalid arity"
+    elseif       monad&&arity!=0; @assert false "invalid arity"
+    elseif dyad&&monad          ; [1,2]
+    elseif dyad                 ; [2]
+    elseif       monad          ; [1]
+    elseif              arity!=0; [arity]
+    else                        ; @assert false "invalid arity"
     end
   end
 arity(f::PFunction) = [f.arity]
@@ -529,6 +529,7 @@ compile1(syn::Node) =
   elseif syn.type === :app
     f, arity, args... = syn.body
     args = map(compile1, args)
+    if isempty(args); args = [Runtime.kself] end
     if f isa Node && f.type===:verb && length(f.body)===1 &&
         f.body[1] isa Prim && f.body[1].v===:(:) &&
         arity.v==2 && args[1] isa Symbol
@@ -564,7 +565,7 @@ compile1(syn::Node) =
     elseif x
       :((x) -> $(body...))
     else
-      :(() -> $(body...))
+      :((_) -> $(body...))
     end
   elseif syn.type===:verb
     hasavs = length(syn.body) > 1
