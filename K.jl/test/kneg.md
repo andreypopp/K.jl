@@ -33,3 +33,14 @@ Chars are converted to ints (and string being lists of chars to lists of ints):
     2-element Vector{Int64}:
      -48
      -49
+
+Works with dictionaries as well, distributing the operation along its values:
+
+    julia> using OrderedCollections: OrderedDict as D
+
+    julia> d = D(:a=>1,:b=>2);
+
+    julia> k"-d"
+    OrderedCollections.OrderedDict{Symbol, Int64} with 2 entries:
+      :a => -1
+      :b => -2

@@ -4,18 +4,11 @@ Import `K` module:
 
     julia> using K
 
-which exposes `k` function to evaluate K language expressions:
-
-    julia> k("1")
-    1
-
-and `@k_str` macro:
+which `@k_str` macro which parses, compiles and evals K code in the scope of the
+current module:
 
     julia> k"1"
     1
-
-Those work the same so we are going to use `@k_str` going forward as it is less
-verbose.
 
 ## Literals
 

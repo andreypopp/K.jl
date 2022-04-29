@@ -37,6 +37,11 @@ git-tree-sha1 = "f110206284c6f7054d613696db4ef63c509d82ad"
 uuid = "9563631e-acd4-5dd8-bebb-4cf36518960d"
 version = "0.7.3"
 
+[[deps.OrderedCollections]]
+git-tree-sha1 = "85f8e6578bf1f9ee0d11e7bb1b1456435479d47c"
+uuid = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
+version = "1.4.1"
+
 [[deps.Printf]]
 deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"

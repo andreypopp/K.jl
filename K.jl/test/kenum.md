@@ -17,7 +17,7 @@
      8
      9
 
-    julia> k("!-10")
+    julia> k"!-10"
     10-element Vector{Int64}:
      -10
       -9
@@ -58,3 +58,14 @@
     2-element Vector{Vector{Int64}}:
      []
      []
+
+`!d` lists keys of a dict:
+
+    julia> using OrderedCollections: OrderedDict as D
+
+    julia> d = D(:a=>1,:b=>2);
+
+    julia> k"!d"
+    2-element Vector{Symbol}:
+     :a
+     :b

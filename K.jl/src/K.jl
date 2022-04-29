@@ -356,6 +356,7 @@ end
 
 module Runtime
 
+using OrderedCollections: OrderedDict
 import ..int_null, ..float_null, ..any_null
 
 struct PFunction
@@ -402,10 +403,105 @@ app(f::Union{Function, PFunction}, args...) =
     end
   end
 
+app(d::AbstractDict{K}, key::K) where K = dictapp0(d, key)
+app(d::AbstractDict{Vector{K}}, key::Vector{K}) where K = dictapp0(d, key)
+app(d::AbstractDict, key::Vector) = app.(Ref(d), key)
+
+dictapp0(d::AbstractDict{K}, key::K) where K =
+  begin
+    v = get(d, key, nothing)
+    if v === nothing
+      v = null(eltype(typeof(d)).types[2])
+    end
+    v
+  end
+
 replicate(v, n) =
   reduce(vcat, fill.(v, n))
 
+identity(f) =
+  if f === kadd; 0
+  elseif f === ksub; 0
+  elseif f === kmul; 1
+  elseif f === kdiv; 1
+  elseif f === kand; 0
+  elseif f === kor; 0
+  else; Char[]
+  end
+
+null(::Type{Float64}) = float_null
+null(::Type{Int64}) = int_null
+# See https://chat.stackexchange.com/transcript/message/58631508#58631508 for a
+# reasoning to return "" (an empty string).
+null(::Type{Any}) = any_null
+
+macro todo(msg)
+  quote
+    @assert false "todo: $($msg)"
+  end
+end
+
 # verbs
+
+macro dyad4char(f)
+  f = esc(f)
+  quote
+    $f(x::Char, y) = $f(Int(x), y)
+    $f(x, y::Char) = $f(x, Int(y))
+    $f(x::Char, y::Char) = $f(Int(x), Int(y))
+  end
+end
+
+macro dyad4vector(f)
+  f = esc(f)
+  quote
+    $f(x::Vector, y) = $f.(x, y)
+    $f(x, y::Vector) = $f.(x, y)
+    $f(x::Vector, y::Vector) =
+      (@assert length(x) == length(y); $f.(x, y))
+  end
+end
+
+macro monad4dict(f)
+  f = esc(f)
+  quote
+    $f(x::AbstractDict) = OrderedDict(zip(keys(x), $f.(values(x))))
+  end
+end
+
+macro dyad4dict(f, V=nothing)
+  f = esc(f)
+  V = esc(V)
+  quote
+    $f(x::AbstractDict, y) = OrderedDict(zip(keys(x), $f.(values(x), y)))
+    $f(x, y::AbstractDict) = OrderedDict(zip(keys(y), $f.(x, values(y))))
+    $f(x::AbstractDict, y::Vector) =
+      begin
+        @assert length(x) == length(y)
+        vals = $f.(values(x), y)
+        OrderedDict(zip(keys(x), vals))
+      end
+    $f(x::Vector, y::AbstractDict) =
+      begin
+        @assert length(x) == length(y)
+        vals = $f.(x, values(y))
+        OrderedDict(zip(keys(y), vals))
+      end
+    $f(x::AbstractDict, y::AbstractDict) =
+      begin
+        K = promote_type(keytype(x), keytype(y))
+        V = $V
+        if V === nothing
+          V = promote_type(valtype(x), valtype(y))
+        end
+        x = OrderedDict{K,V}(x)
+        for (k, v) in y
+          x[k] = $f(haskey(x, k) ? x[k] : identity($f), v)
+        end
+        x
+      end
+  end
+end
 
 # :: x
 kself(x) = x
@@ -427,60 +523,48 @@ kflip(x::Vector) =
     end
     y
   end
+kflip(::AbstractDict) = @todo "+d should produce a table"
 
 # x + y
 kadd(x, y) = x + y
-kadd(x::Char, y) = Int(x) + y
-kadd(x, y::Char) = x + Int(y)
-kadd(x::Char, y::Char) = Int(x) + Int(y)
-kadd(x, y::Vector) = kadd.(x, y)
-kadd(x::Vector, y) = kadd.(x, y)
-kadd(x::Vector, y::Vector) =
-  (@assert length(x) == length(y); kadd.(x, y))
+@dyad4char(kadd)
+@dyad4vector(kadd)
+@dyad4dict(kadd)
 
 # - x
 kneg(x) = -x
 kneg(x::Char) = -Int(x)
 kneg(x::Vector) = kneg.(x)
+@monad4dict(kneg)
 
 # x - y
 ksub(x, y) = x - y
-ksub(x::Char, y) = Int(x) - y
-ksub(x, y::Char) = x - Int(y)
-ksub(x::Char, y::Char) = Int(x) - Int(y)
-ksub(x::Vector, y) = ksub.(x, y)
-ksub(x, y::Vector) = ksub.(x, y)
-ksub(x::Vector, y::Vector) =
-  (@assert length(x) == length(y); ksub.(x, y))
+@dyad4char(ksub)
+@dyad4vector(ksub)
+@dyad4dict(ksub)
 
 # * x
 kfirst(x) = x
-kfirst(x::Vector) = isempty(x) ? null(eltype(x)) : x[1]
+kfirst(x::Vector) = isempty(x) ? null(eltype(x)) : (@inbounds x[1])
+kfirst(x::AbstractDict) = isempty(x) ? null(eltype(x)) : first(x).second
 
 # x * y
 kmul(x, y) = x * y
-kmul(x::Char, y) = Int(x) * y
-kmul(x, y::Char) = x * Int(y)
-kmul(x::Char, y::Char) = Int(x) * Int(y)
-kmul(x::Vector, y) = kmul.(x, y)
-kmul(x, y::Vector) = kmul.(x, y)
-kmul(x::Vector, y::Vector) =
-  (@assert length(x) == length(y); kmul.(x, y))
+@dyad4char(kmul)
+@dyad4vector(kmul)
+@dyad4dict(kmul)
 
 # %N square root
 ksqrt(x) = x<0 ? -0.0 : sqrt(x)
 ksqrt(x::Char) = sqrt(Int(x))
 ksqrt(x::Vector) = ksqrt.(x)
+@monad4dict(ksqrt)
 
 # x % y
 kdiv(x, y) = x / y
-kdiv(x::Char, y) = Int(x) / y
-kdiv(x, y::Char) = x / Int(y)
-kdiv(x::Char, y::Char) = Int(x) / Int(y)
-kdiv(x::Vector, y) = kdiv.(x, y)
-kdiv(x, y::Vector) = kdiv.(x, y)
-kdiv(x::Vector, y::Vector) =
-  (@assert length(x) == length(y); kdiv.(x, y))
+@dyad4char(kdiv)
+@dyad4vector(kdiv)
+@dyad4dict(kdiv, Float64)
 
 # ! i enum
 kenum(x::Int64) =
@@ -510,6 +594,8 @@ kenum(x::Vector) =
       end
     end
   end
+# !d keys
+kenum(x::AbstractDict) = collect(keys(x))
 
 # i!N mod / div
 kmod(x::Int64, y) =
@@ -517,8 +603,12 @@ kmod(x::Int64, y) =
 kmod(x::Int64, y::Char) = kmod(x, Int(y))
 kmod(x::Char, y::Int64) = kmod(Int(x), y)
 kmod(x::Char, y::Char) = kmod(Int(x), Int(y))
-kmod(x::Int64, y::Vector) =
-  kmod.(x, y)
+kmod(x::Int64, y::Vector) = kmod.(x, y)
+kmod(x::Char, y::AbstractDict) = kmod(Int(x), y)
+kmod(x::Int64, y::AbstractDict) = OrderedDict(zip(keys(y), kmod.(x, values(y))))
+
+# x!y dict
+kmod(x, y) = OrderedDict(zip(x, y))
 
 # &I where
 kwhere(x::Int64) = fill(0, x)
@@ -526,60 +616,28 @@ kwhere(x::Vector{Int64}) = replicate(0:length(x)-1, x)
 
 # N&N min/and
 kand(x, y) = min(x, y)
-kand(x::Char, y) = min(Int(x), y)
-kand(x, y::Char) = min(x, Int(y))
-kand(x::Char, y::Char) = min(Int(x), Int(y))
-kand(x::Vector, y) = kand.(x, y)
-kand(x, y::Vector) = kand.(x, y)
-kand(x::Vector, y::Vector) =
-  (@assert length(x) == length(y); kand.(x, y))
+@dyad4char(kand)
+@dyad4vector(kand)
+@dyad4dict(kand)
 
 # |x reverse
 krev(x) = x
 krev(x::Vector) = reverse(x)
+krev(x::AbstractDict) = OrderedDict(reverse(collect(x)))
 
 # N|N max/or
 kor(x, y) = max(x, y)
-kor(x::Char, y) = max(Int(x), y)
-kor(x, y::Char) = max(x, Int(y))
-kor(x::Char, y::Char) = max(Int(x), Int(y))
-kor(x::Vector, y) = kor.(x, y)
-kor(x, y::Vector) = kor.(x, y)
-kor(x::Vector, y::Vector) =
-  (@assert length(x) == length(y); kor.(x, y))
+@dyad4char(kor)
+@dyad4vector(kor)
+@dyad4dict(kor)
 
 # adverbs
 
-# keach(f::M) = (x) -> map(f, x)
-# keach(f::D) = (x::Float64, y::Float64) -> f(x, y)
-# keach(f::D) = (x::Vector{Float64}, y::Float64) -> f.(x, y)
-# keach(f::D) = (x::Float64, y::Vector{Float64}) -> f.(x, y)
-# keach(f::D) = (x::Vector{Float64}, y::Vector{Float64}) -> begin
-#   @assert length(x) == length(y)
-#   f.(x, y)
-# end
-# keach(x::Vector{Float64}) = @assert false "not implemented"
-
-kfoldM(@nospecialize(f)) = (x) ->
-  isempty(x) ? identity(f) : foldl(f, x)
-kfoldD(@nospecialize(f)) = (x, y) ->
-  foldl(f, y, init=x)
-
 function kfold(f)
   kfoldf(x) = isempty(x) ? identity(f) : foldl(f, x)
+  kfoldf(x::AbstractDict) = kfoldf(values(x))
   kfoldf(x, y) = foldl(f, y, init=x)
 end
-
-identity(f) =
-  if f === kadd; 0
-  else; ""
-  end
-
-null(::Type{Float64}) = float_null
-null(::Type{Int64}) = int_null
-# See https://chat.stackexchange.com/transcript/message/58631508#58631508 for a
-# reasoning to return "" (an empty string).
-null(::Type{Any}) = any_null
 
 end
 
@@ -589,21 +647,21 @@ import ..Runtime
 
 verbs = Dict(
              (:(::), 1) => Runtime.kself,
-             (:(:), 2) => Runtime.kright,
-             (:+, 1) => Runtime.kflip,
-             (:+, 2) => Runtime.kadd,
-             (:-, 1) => Runtime.kneg,
-             (:-, 2) => Runtime.ksub,
-             (:*, 1) => Runtime.kfirst,
-             (:*, 2) => Runtime.kmul,
-             (:%, 1) => Runtime.ksqrt,
-             (:%, 2) => Runtime.kdiv,
-             (:(!), 1) => Runtime.kenum,
-             (:(!), 2) => Runtime.kmod,
-             (:(&), 1) => Runtime.kwhere,
-             (:(&), 2) => Runtime.kand,
-             (:(|), 1) => Runtime.krev,
-             (:(|), 2) => Runtime.kor,
+             ( :(:), 2) => Runtime.kright,
+             (   :+, 1) => Runtime.kflip,
+             (   :+, 2) => Runtime.kadd,
+             (   :-, 1) => Runtime.kneg,
+             (   :-, 2) => Runtime.ksub,
+             (   :*, 1) => Runtime.kfirst,
+             (   :*, 2) => Runtime.kmul,
+             (   :%, 1) => Runtime.ksqrt,
+             (   :%, 2) => Runtime.kdiv,
+             ( :(!), 1) => Runtime.kenum,
+             ( :(!), 2) => Runtime.kmod,
+             ( :(&), 1) => Runtime.kwhere,
+             ( :(&), 2) => Runtime.kand,
+             ( :(|), 1) => Runtime.krev,
+             ( :(|), 2) => Runtime.kor,
             )
 
 adverbs = Dict(
@@ -751,19 +809,21 @@ tokenize = Tokenize.tokenize
 parse = Parse.parse
 compile = Compile.compile
 
-k(k::String) =
+k(k::String, mod::Module) =
   begin
     syn = parse(k)
     # @info "syn" syn
-    jlcode = compile(parse(k))
+    jlcode = compile(syn)
     # @info "jlcode" jlcode
-    Base.eval(jlcode)
+    mod.eval(jlcode)
   end
+
+macro k_str(code); k(code, __module__) end
 
 module Repl
 using ReplMaker, REPL
 
-import ..k, ..parse
+import ..compile, ..parse
 
 function init()
   # show_function(io::IO, mime::MIME"text/plain", x) = print(io, x)
@@ -772,7 +832,11 @@ function init()
     try; parse(s); true
     catch e; false end
   end
-  initrepl(k,
+  function run(code::String)
+    jlcode = compile(code)
+    Main.eval(jlcode)
+  end
+  initrepl(run,
            prompt_text="k) ",
            prompt_color=:blue, 
            # show_function=show_function,
@@ -783,8 +847,6 @@ function init()
   nothing
 end
 end
-
-macro k_str(code); k(code) end
 
 export k
 export @k_str

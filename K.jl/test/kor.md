@@ -65,3 +65,35 @@ Chars are converted to ints (and string being lists of chars to lists of ints):
     2-element Vector{Int64}:
      48
      49
+
+Works with dictionaries as well, distributing the operation along its values:
+
+    julia> using OrderedCollections: OrderedDict as D
+
+    julia> d1, d2 = D(:a=>1,:b=>2), D(:a=>3,:c=>4);
+
+    julia> k"d1|1.5"
+    OrderedCollections.OrderedDict{Symbol, Float64} with 2 entries:
+      :a => 1.5
+      :b => 2.0
+
+    julia> k"1.5|d1"
+    OrderedCollections.OrderedDict{Symbol, Float64} with 2 entries:
+      :a => 1.5
+      :b => 2.0
+
+    julia> k"d1|1.5 1.6"
+    OrderedCollections.OrderedDict{Symbol, Float64} with 2 entries:
+      :a => 1.5
+      :b => 2.0
+
+    julia> k"1.5 1.6|d1"
+    OrderedCollections.OrderedDict{Symbol, Float64} with 2 entries:
+      :a => 1.5
+      :b => 2.0
+
+    julia> k"d1|d2"
+    OrderedCollections.OrderedDict{Symbol, Int64} with 3 entries:
+      :a => 3
+      :b => 2
+      :c => 4

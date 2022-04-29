@@ -82,3 +82,37 @@
      -10.0
       10.0
      -10.0
+
+Works with dictionaries, distributing along its values:
+
+    julia> using OrderedCollections: OrderedDict as D
+
+    julia> d = D(:a=>10,:b=>12,:c=>-10,:d=>-12);
+
+    julia> k"-5!d"
+    OrderedCollections.OrderedDict{Symbol, Int64} with 4 entries:
+      :a => 2
+      :b => 2
+      :c => -2
+      :d => -3
+
+    julia> k"5!d"
+    OrderedCollections.OrderedDict{Symbol, Int64} with 4 entries:
+      :a => 0
+      :b => 2
+      :c => 0
+      :d => 3
+
+`x!y` creates a new dict:
+
+    julia> k"1 2 3!4 5 6"
+    OrderedCollections.OrderedDict{Int64, Int64} with 3 entries:
+      1 => 4
+      2 => 5
+      3 => 6
+
+    julia> k"`a`b`c!4 5 6"
+    OrderedCollections.OrderedDict{Symbol, Int64} with 3 entries:
+      :a => 4
+      :b => 5
+      :c => 6
