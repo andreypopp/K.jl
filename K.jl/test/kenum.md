@@ -61,7 +61,7 @@
 
 `!d` lists keys of a dict:
 
-    julia> using OrderedCollections: OrderedDict as D
+    julia> using K.Runtime: OrderedDict as D
 
     julia> d = D(:a=>1,:b=>2);
 

@@ -356,7 +356,6 @@ end
 
 module Runtime
 
-using OrderedCollections: OrderedDict
 import ..int_null, ..float_null, ..any_null
 
 struct PFunction
@@ -403,11 +402,11 @@ app(f::Union{Function, PFunction}, args...) =
     end
   end
 
+app(d::AbstractDict, key) = dictapp0(d, key)
 app(d::AbstractDict{K}, key::K) where K = dictapp0(d, key)
-app(d::AbstractDict{Vector{K}}, key::Vector{K}) where K = dictapp0(d, key)
 app(d::AbstractDict, key::Vector) = app.(Ref(d), key)
 
-dictapp0(d::AbstractDict{K}, key::K) where K =
+dictapp0(d::AbstractDict, key) =
   begin
     v = get(d, key, nothing)
     if v === nothing
@@ -427,6 +426,67 @@ identity(f) =
   elseif f === kand; 0
   elseif f === kor; 0
   else; Char[]
+  end
+
+
+isequal(x, y) = false
+isequal(x::T, y::T) where T = x == y
+isequal(x::Float64, y::Float64) = x === y # 1=0n~0n
+isequal(x::Vector{T}, y::Vector{T}) where T =
+  if hash(x) != hash(y); return false
+  else
+    len = length(x)
+    if len != length(y); return false end
+    @inbounds for i in 1:len
+      if !isequal(x[i], y[i]); return false end
+    end
+    return true
+  end
+isequal(x::AbstractDict{K,V}, y::AbstractDict{K,V}) where {K,V} =
+  if hash(x) != hash(y); return false
+  elseif length(x) != length(y); return false
+  else
+    for (xe, ye) in zip(x, y)
+      if !isequal(xe.first, ye.first) ||
+         !isequal(xe.second, ye.second)
+        return false
+      end
+    end
+    return true
+  end
+
+import Base: <, <=, ==, convert, length, isempty, iterate, delete!,
+                 show, dump, empty!, getindex, setindex!, get, get!,
+                 in, haskey, keys, merge, copy, cat,
+                 push!, pop!, popfirst!, insert!,
+                 union!, delete!, empty, sizehint!,
+                 hash,
+                 map, map!, reverse,
+                 first, last, eltype, getkey, values, sum,
+                 merge, merge!, lt, Ordering, ForwardOrdering, Forward,
+                 ReverseOrdering, Reverse, Lt,
+                 isless,
+                 union, intersect, symdiff, setdiff, setdiff!, issubset,
+                 searchsortedfirst, searchsortedlast, in,
+                 filter, filter!, ValueIterator, eachindex, keytype,
+                 valtype, lastindex, nextind,
+                 copymutable, emptymutable, dict_with_eltype
+include("dict_support.jl")
+include("ordered_dict.jl")
+
+
+isequal(x::OrderedDict{K,V}, y::OrderedDict{K,V}) where {K,V} =
+  if hash(x) != hash(y); return 0
+  else
+    len = length(x.keys)
+    if len != length(y.keys); return 0 end
+    @inbounds for i in 1:len
+      if !isequal(x.keys[i], y.keys[i]) ||
+         !isequal(x.vals[i], y.vals[i])
+        return false
+      end
+    end
+    return true
   end
 
 null(::Type{Float64}) = float_null
@@ -608,7 +668,11 @@ kmod(x::Char, y::AbstractDict) = kmod(Int(x), y)
 kmod(x::Int64, y::AbstractDict) = OrderedDict(zip(keys(y), kmod.(x, values(y))))
 
 # x!y dict
-kmod(x, y) = OrderedDict(zip(x, y))
+kmod(x, y) = OrderedDict(x => y)
+kmod(x::Vector, y) = isempty(x) ? OrderedDict() : OrderedDict(x .=> y)
+kmod(x, y::Vector) = isempty(y) ? OrderedDict() : OrderedDict(x => y[end])
+kmod(x::Vector, y::Vector) =
+  (@assert length(x) == length(y); OrderedDict(zip(x, y)))
 
 # &I where
 kwhere(x::Int64) = fill(0, x)

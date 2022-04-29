@@ -74,32 +74,32 @@ Chars are converted to ints (and string being lists of chars to lists of ints):
 
 Works with dictionaries as well, distributing the operation along its values:
 
-    julia> using OrderedCollections: OrderedDict as D
+    julia> using K.Runtime: OrderedDict as D
 
     julia> d1, d2 = D(:a=>1,:b=>2), D(:a=>3,:c=>4);
 
     julia> k"d1%2"
-    OrderedCollections.OrderedDict{Symbol, Float64} with 2 entries:
+    K.Runtime.OrderedDict{Symbol, Float64} with 2 entries:
       :a => 0.5
       :b => 1.0
 
     julia> k"2%d1"
-    OrderedCollections.OrderedDict{Symbol, Float64} with 2 entries:
+    K.Runtime.OrderedDict{Symbol, Float64} with 2 entries:
       :a => 2.0
       :b => 1.0
 
     julia> k"d1%2 4"
-    OrderedCollections.OrderedDict{Symbol, Float64} with 2 entries:
+    K.Runtime.OrderedDict{Symbol, Float64} with 2 entries:
       :a => 0.5
       :b => 0.5
 
     julia> k"2 4%d1"
-    OrderedCollections.OrderedDict{Symbol, Float64} with 2 entries:
+    K.Runtime.OrderedDict{Symbol, Float64} with 2 entries:
       :a => 2.0
       :b => 2.0
 
     julia> k"d1%d2"
-    OrderedCollections.OrderedDict{Symbol, Float64} with 3 entries:
+    K.Runtime.OrderedDict{Symbol, Float64} with 3 entries:
       :a => 0.333333
       :b => 2.0
       :c => 0.25
