@@ -825,6 +825,73 @@ kreshape(x::Union{Function,PFunction}, y) =
 kreshape(x::Vector, y::AbstractDict) = 
   OrderedDict(zip(x, dictapp0.(Ref(y), x)))
 
+# _n floor
+kfloor(x::Union{Int64, Float64}) = floor(x)
+
+# _c lowercase
+kfloor(x::Union{Char,Vector{Char}}) = lowercase(x)
+
+kfloor(x::Vector) = kfloor.(x)
+@monad4dict(kfloor)
+
+# i_Y drop
+kdrop(x::Int64, y::Vector) =
+  if x == 0; y elseif x > 0; y[x + 1:end] else; y[1:end + x] end
+kdrop(x::Int64, y::AbstractDict) =
+  begin
+    ks = kdrop(x, collect(keys(y)))
+    vs = kdrop(x, collect(values(y)))
+    OrderedDict(zip(ks, vs))
+  end
+
+# I_Y cut
+kdrop(x::Vector{Int64}, y::Vector) =
+  begin
+    if isempty(y); return Any[] end
+    o = Vector{eltype(y)}[]
+    previ = -1
+    @inbounds for i in x
+      if previ != -1
+        @assert i >= previ
+        push!(o, y[previ + 1:i])
+      end
+      previ = i
+    end
+    push!(o, y[previ + 1:end])
+    o
+  end
+
+# f_Y weed out
+kdrop(x::Union{Function,PFunction}, y::Vector) =
+  filter(e -> !x(e), y)
+
+# X_i delete
+kdrop(x::Vector, y::Int64) =
+  y < 0 || y >= length(x) ? x : deleteat!(copy(x), [y+1])
+
+# $x string
+kstring(x::Union{Int64,Float64,Symbol}) = collect(string(x))
+kstring(x::Vector) = kstring.(x)
+@monad4dict(kstring)
+
+# i$C pad
+kcast(x::Int64, y::Vector{Char}) =
+  begin
+    if x == 0; return Char[] end
+    len = length(y)
+    absx = abs(x)
+    if len == absx; y
+    elseif len > absx
+      x > 0 ?
+        y[1:x] :
+        y[-x:end]
+    else
+      x > 0 ?
+        vcat(y, repeat(fill(' '), absx - len)) :
+        vcat(repeat(fill(' '), absx - len), y)
+    end
+  end
+
 # adverbs
 
 function kfold(f)
@@ -866,6 +933,9 @@ verbs = Dict(
              (          :^, 2) => Runtime.kfill,
              ( Symbol('#'), 1) => Runtime.klen,
              ( Symbol('#'), 2) => Runtime.kreshape,
+             (       :(_),  1) => Runtime.kfloor,
+             (       :(_),  2) => Runtime.kdrop,
+             (       :($),  1) => Runtime.kstring,
             )
 
 adverbs = Dict(
