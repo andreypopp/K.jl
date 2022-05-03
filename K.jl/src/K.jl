@@ -70,7 +70,17 @@ keepneg(tok) =
   space = nothing
   markspace() = (space = te)
   emit(kind) = push!(toks, (kind, data[ts:te]))
-  emitstr() = push!(toks, (:str, data[ts+1:te-1]))
+  emitstr() = begin
+    str = data[ts+1:te-1]
+    str = replace(str,
+                  "\\0" => "\0",
+                  "\\n" => "\n",
+                  "\\t" => "\t",
+                  "\\r" => "\r",
+                  "\\\\" => "\\",
+                  "\\\"" => "\"")
+    push!(toks, (:str, str))
+  end
   emitnumber(kind) =
     begin
       num = data[ts:te]
@@ -96,6 +106,8 @@ end
 int_null = typemin(Int64)
 float_null = NaN
 any_null = []
+char_null = ' '
+symbol_null = Symbol("")
 
 module Parse
 import ..Tokenize: Token
@@ -159,7 +171,7 @@ consume!(ctx::ParseContext) =
     tok
   end
 
-import ..Tokenize, ..int_null, ..float_null
+import ..Tokenize, ..int_null, ..float_null, ..symbol_null, ..char_null
 
 function parse(data::String)
   tokens = Tokenize.tokenize(data)
@@ -433,8 +445,7 @@ isequal(x, y) = false
 isequal(x::T, y::T) where T = x == y
 isequal(x::Float64, y::Float64) = x === y # 1=0n~0n
 isequal(x::Vector{T}, y::Vector{T}) where T =
-  if hash(x) != hash(y); return false
-  else
+  begin
     len = length(x)
     if len != length(y); return false end
     @inbounds for i in 1:len
@@ -443,8 +454,7 @@ isequal(x::Vector{T}, y::Vector{T}) where T =
     return true
   end
 isequal(x::AbstractDict{K,V}, y::AbstractDict{K,V}) where {K,V} =
-  if hash(x) != hash(y); return false
-  elseif length(x) != length(y); return false
+  if length(x) != length(y); return false
   else
     for (xe, ye) in zip(x, y)
       if !isequal(xe.first, ye.first) ||
@@ -476,8 +486,7 @@ include("ordered_dict.jl")
 
 
 isequal(x::OrderedDict{K,V}, y::OrderedDict{K,V}) where {K,V} =
-  if hash(x) != hash(y); return 0
-  else
+  begin
     len = length(x.keys)
     if len != length(y.keys); return 0 end
     @inbounds for i in 1:len
@@ -489,8 +498,12 @@ isequal(x::OrderedDict{K,V}, y::OrderedDict{K,V}) where {K,V} =
     return true
   end
 
+import ..float_null, ..int_null, ..symbol_null, ..char_null, ..any_null
+
 null(::Type{Float64}) = float_null
 null(::Type{Int64}) = int_null
+null(::Type{Symbol}) = symbol_null
+null(::Type{Char}) = char_null
 # See https://chat.stackexchange.com/transcript/message/58631508#58631508 for a
 # reasoning to return "" (an empty string).
 null(::Type{Any}) = any_null
@@ -695,6 +708,123 @@ kor(x, y) = max(x, y)
 @dyad4vector(kor)
 @dyad4dict(kor)
 
+# ~x not
+knot(x::Float64) = Int(x == 0.0)
+knot(x::Int64) = Int(x == 0.0)
+knot(x::Char) = Int(x == '\0')
+knot(x::Symbol) = Int(x == symbol_null)
+knot(x::Union{Function,PFunction}) = Int(x == kself)
+knot(x::Vector) = knot.(x)
+@monad4dict(knot)
+
+# x~y match
+kmatch(x, y) = Int(hash(x)===hash(y)&&isequal(x, y))
+
+# =i unit matrix
+kgroup(x::Int64) =
+  begin
+    m = Vector{Vector{Int64}}(undef, x)
+    for i in 1:x
+      m[i] = zeros(Int64, x)
+      m[i][i] = 1
+    end
+    m
+  end
+
+# =X group
+kgroup(x::Vector) =
+  begin
+    g = OrderedDict{eltype(x),Vector{Int64}}()
+    allocg = Vector{Int64}
+    # TODO: this is not correct right now as OrderedDict uses isequal and not
+    # kmatch as it should be.
+    for (n, xe) in enumerate(x)
+      push!(get!(allocg, g, xe), n - 1)
+    end
+    g
+  end
+
+# x=y eq
+keq(x, y) = x == y
+@dyad4char(keq)
+@dyad4vector(keq)
+@dyad4dict(keq)
+
+# ,x enlist
+kenlist(x) = [x]
+
+# x,y concat
+kconcat(x, y) = [x, y]
+kconcat(x, y::Vector) = [x, y...]
+kconcat(x::Vector, y) = [x..., y]
+kconcat(x::Vector, y::Vector) = vcat(x, y)
+kconcat(x::AbstractDict, y::AbstractDict) = merge(x, y)
+
+# ^x null
+knull(x::Int64) = x == int_null
+knull(x::Float64) = x === float_null
+knull(x::Symbol) = x === symbol_null
+knull(x::Char) = x === char_null
+knull(x::Vector) = knull.(x)
+@monad4dict(knull)
+
+# a^y fill
+kfill(x::Union{Number,Char,Symbol}, y) =
+  y == int_null ||
+  y === float_null ||
+  y == symbol_null ||
+  y == char_null ||
+  y == any_null ?
+  x : y
+kfill(x::Union{Number,Char,Symbol}, y::Vector) = kfill.(x, y)
+kfill(x::Union{Number,Char,Symbol}, y::AbstractDict) =
+  OrderedDict(zip(keys(y), kfill.(x, values(y))))
+
+# X^y without
+kfill(x::Vector, y) =
+  filter(x -> !(hash(x)===hash(y)&&isequal(x, y)), x)
+kfill(x::Vector, y::Vector) =
+  begin
+    mask = OrderedDict(y .=> true)
+    filter(x -> !haskey(mask, x), x)
+  end
+
+# #x length
+klen(x) = 1
+klen(x::Vector) = length(x)
+klen(x::AbstractDict) = length(x)
+
+# i#y reshape
+kreshape(x::Int64, y) = kreshape(x, [y])
+kreshape(x::Int64, y::Vector) =
+  begin
+    if x == 0; return empty(y) end
+    it, len = x>0 ? (y, x) : (Iterators.reverse(y), -x)
+    collect(Iterators.take(Iterators.cycle(it), len))
+  end
+
+# I#y reshape
+kreshape(x::Vector, y) = kreshape(x, [y])
+kreshape(x::Vector, y::Vector) = 
+  length(x) == 0 ?
+    Any[] :
+    kreshape0(x, 1, Iterators.Stateful(Iterators.cycle(y)))
+kreshape0(x, idx, it) =
+  begin
+    @assert x[idx] >= 0
+    length(x) == idx ?
+      collect(Iterators.take(it, x[idx])) :
+      [kreshape0(x, idx+1, it) for _ in 1:x[idx]]
+  end
+
+# f#y replicate
+kreshape(x::Union{Function,PFunction}, y) = 
+  replicate(y, x(y))
+
+# x#d take
+kreshape(x::Vector, y::AbstractDict) = 
+  OrderedDict(zip(x, dictapp0.(Ref(y), x)))
+
 # adverbs
 
 function kfold(f)
@@ -710,22 +840,32 @@ import ..Parse: Syntax, Node, Lit, Name, Prim, parse
 import ..Runtime
 
 verbs = Dict(
-             (:(::), 1) => Runtime.kself,
-             ( :(:), 2) => Runtime.kright,
-             (   :+, 1) => Runtime.kflip,
-             (   :+, 2) => Runtime.kadd,
-             (   :-, 1) => Runtime.kneg,
-             (   :-, 2) => Runtime.ksub,
-             (   :*, 1) => Runtime.kfirst,
-             (   :*, 2) => Runtime.kmul,
-             (   :%, 1) => Runtime.ksqrt,
-             (   :%, 2) => Runtime.kdiv,
-             ( :(!), 1) => Runtime.kenum,
-             ( :(!), 2) => Runtime.kmod,
-             ( :(&), 1) => Runtime.kwhere,
-             ( :(&), 2) => Runtime.kand,
-             ( :(|), 1) => Runtime.krev,
-             ( :(|), 2) => Runtime.kor,
+             (      :(::),  1) => Runtime.kself,
+             (       :(:),  2) => Runtime.kright,
+             (         :+,  1) => Runtime.kflip,
+             (         :+,  2) => Runtime.kadd,
+             (         :-,  1) => Runtime.kneg,
+             (         :-,  2) => Runtime.ksub,
+             (         :*,  1) => Runtime.kfirst,
+             (         :*,  2) => Runtime.kmul,
+             (         :%,  1) => Runtime.ksqrt,
+             (         :%,  2) => Runtime.kdiv,
+             (       :(!),  1) => Runtime.kenum,
+             (       :(!),  2) => Runtime.kmod,
+             (       :(&),  1) => Runtime.kwhere,
+             (       :(&),  2) => Runtime.kand,
+             (       :(|),  1) => Runtime.krev,
+             (       :(|),  2) => Runtime.kor,
+             (       :(~),  1) => Runtime.knot,
+             (       :(~),  2) => Runtime.kmatch,
+             (       :(=),  1) => Runtime.kgroup,
+             (       :(=),  2) => Runtime.keq,
+             ( Symbol(','), 1) => Runtime.kenlist,
+             ( Symbol(','), 2) => Runtime.kconcat,
+             (          :^, 1) => Runtime.knull,
+             (          :^, 2) => Runtime.kfill,
+             ( Symbol('#'), 1) => Runtime.klen,
+             ( Symbol('#'), 2) => Runtime.kreshape,
             )
 
 adverbs = Dict(
@@ -823,7 +963,17 @@ compileapp(f::Union{Function,Runtime.PFunction}, args) =
 
 compilefun(syn::Prim, prefer_arity::Int64) =
   begin
-    f = get(verbs, (syn.v, prefer_arity), nothing)
+    f =
+      if prefer_arity == 2
+        f = get(verbs, (syn.v, 2), nothing)
+        if f === nothing
+          f = get(verbs, (syn.v, 1), nothing)
+        end
+        f
+      elseif prefer_arity == 1
+        f = get(verbs, (syn.v, 1), nothing)
+      else; @assert false end
+    get(verbs, (syn.v, prefer_arity), nothing)
     @assert f !== nothing "primitive is not implemented: $(syn.v) ($prefer_arity arity)"
     f
   end
@@ -901,16 +1051,28 @@ function init()
     Main.eval(jlcode)
   end
   initrepl(run,
-           prompt_text="k) ",
+           prompt_text="  ",
            prompt_color=:blue, 
            # show_function=show_function,
            valid_input_checker=valid_input_checker,
            startup_text=true,
-           start_key=')', 
+           start_key='\\', 
            mode_name="k")
   nothing
 end
+
+function __init__()
+  if isdefined(Base, :active_repl)
+    init()
+  else
+    atreplinit() do repl
+      init()
+    end
+  end
 end
+end
+
+1
 
 export k
 export @k_str

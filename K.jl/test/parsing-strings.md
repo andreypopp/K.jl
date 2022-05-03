@@ -14,7 +14,7 @@ Chars:
 
     julia> K.parse("\"so\\\"me\"")
     Node(seq)
-    └─ Lit("so\\\"me")
+    └─ Lit("so\"me")
 
     julia> K.parse("\"so\nme\"")
     Node(seq)
