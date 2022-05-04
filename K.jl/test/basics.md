@@ -193,10 +193,10 @@ But it is possible to supply less arguments than the function's arity, in this
 case a new partially applied function is returned:
 
     julia> k"{x+y+z}[1]"
-    *2-kfun*
+    *2-pfunction*
 
     julia> k"{x+y+z}[1][2]"
-    *1-kfun*
+    *1-pfunction*
 
     julia> k"{x+y+z}[1][2][3]"
     6

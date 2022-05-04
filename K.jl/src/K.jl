@@ -9,7 +9,7 @@ re = Automa.RegExp
 
 colon    = re":"
 adverb   = re"'" | re"/" | re"\\" | re"':" | re"/:" | re"\\:"
-verb1    = colon | re"[\+\-*%!&\|<>=~,^#_\\$?@\.]"
+verb1    = colon | re"[\+\-*%!&\|<>=~,^#_$?@\.]"
 verb     = verb1 | (verb1 * colon)
 name     = re"[a-zA-Z]+[a-zA-Z0-9]*"
 backq    = re"`"
@@ -136,7 +136,8 @@ struct Prim <: Syntax
 end
 
 isnoun(syn::Syntax) = !isverb(syn)
-isverb(syn::Syntax) = syn isa Node && syn.type === :verb
+isverb(syn::Syntax) =
+  syn isa Node && (syn.type === :verb || syn.type === :adverb)
 
 import AbstractTrees
 
@@ -215,10 +216,10 @@ function expr(ctx::ParseContext)
       if ve isa Node &&
          ve.type === :app &&
          length(ve.body) == 3 &&
-         ve.body[1] isa Node && ve.body[1].type === :verb
+         isverb(ve.body[1])
         v, _, x = ve.body
         Node(:app, [v, Lit(2), t, x])
-      elseif ve isa Node && ve.type === :verb
+      elseif isverb(ve)
         Node(:app, [ve, Lit(2), t])
       else
         Node(:app, [t, Lit(1), ve])
@@ -299,34 +300,34 @@ function term(ctx::ParseContext)
       adverb(Node(:verb, [Prim(value)]), ctx)
     elseif next === :name
       _, value = consume!(ctx)
-      maybe_adverb(Name(value), ctx)
+      adverb(Name(value), ctx)
     elseif next === :int || next === :float
       syn = number(ctx)
-      maybe_adverb(syn, ctx)
+      adverb(syn, ctx)
     elseif next === :symbol
       syn = symbol(ctx)
-      maybe_adverb(syn, ctx)
+      adverb(syn, ctx)
     elseif next === :bitmask
       _, value = consume!(ctx)
       value = Lit.(Base.parse.(Int64, collect(value[1:end-1])))
       syn = length(value) == 1 ? value[1] : Node(:seq, value)
-      maybe_adverb(syn, ctx)
+      adverb(syn, ctx)
     elseif next === :str
       _, value = consume!(ctx)
-      maybe_adverb(Lit(value), ctx)
+      adverb(Lit(value), ctx)
     elseif next === :lbrace
       consume!(ctx)
       es = exprs(ctx)
       @assert peek(ctx) === :rbrace
       consume!(ctx)
-      maybe_adverb(Node(:fun, es), ctx)
+      adverb(Node(:fun, es), ctx)
     elseif next === :lparen
       consume!(ctx)
       es = exprs(ctx)
       @assert peek(ctx) === :rparen
       consume!(ctx)
       syn = length(es) == 1 ? es[1] : Node(:seq, es)
-      maybe_adverb(syn, ctx)
+      adverb(syn, ctx)
     else
       nothing
     end
@@ -351,17 +352,9 @@ end
 function adverb(verb, ctx::ParseContext)
   while peek(ctx) === :adverb
     _, value = consume!(ctx)
-    push!(verb.body, Prim(value))
+    verb = Node(:adverb, [Prim(value), verb])
   end
   verb
-end
-
-function maybe_adverb(noun, ctx::ParseContext)
-  if peek(ctx) === :adverb
-    adverb(Node(:verb, [noun]), ctx)
-  else
-    noun
-  end
 end
 
 end
@@ -370,15 +363,9 @@ module Runtime
 
 import ..int_null, ..float_null, ..any_null
 
-struct PFunction
-  f::Function
-  args::Tuple
-  arity::Int
-end
-(s::PFunction)(args...) = s.f(s.args..., args...)
-Base.show(io::IO, s::PFunction) = print(io, "*$(s.arity)-kfun*")
+Arity = Tuple{Int8, Int8}
 
-arity(f::Function) =
+arity(f::Function)::Arity =
   begin
     monad,dyad,arity = false,false,0
     for m in methods(f)
@@ -391,40 +378,12 @@ arity(f::Function) =
     end
         if dyad       &&arity!=0; @assert false "invalid arity"
     elseif       monad&&arity!=0; @assert false "invalid arity"
-    elseif dyad&&monad          ; [1,2]
-    elseif dyad                 ; [2]
-    elseif       monad          ; [1]
-    elseif              arity!=0; [arity]
+    elseif dyad&&monad          ; (1, 2)
+    elseif dyad                 ; (2, 2)
+    elseif       monad          ; (1, 1)
+    elseif              arity!=0; (arity,arity)
     else                        ; @assert false "invalid arity"
     end
-  end
-arity(f::PFunction) = [f.arity]
-
-papp(f::Function, args, narr) =
-  PFunction(f, args, narr)
-papp(f::PFunction, args, narr) =
-  PFunction(f.f, (f.args..., args...), narr)
-
-app(f::Union{Function, PFunction}, args...) =
-  begin
-    flen, alen = arity(f), length(args)
-    if alen in flen; f(args...)
-    elseif flen[1] > alen; papp(f, args, flen[1] - alen)
-    else; @assert false "arity error"
-    end
-  end
-
-app(d::AbstractDict, key) = dictapp0(d, key)
-app(d::AbstractDict{K}, key::K) where K = dictapp0(d, key)
-app(d::AbstractDict, key::Vector) = app.(Ref(d), key)
-
-dictapp0(d::AbstractDict, key) =
-  begin
-    v = get(d, key, nothing)
-    if v === nothing
-      v = null(eltype(typeof(d)).types[2])
-    end
-    v
   end
 
 replicate(v, n) =
@@ -508,13 +467,13 @@ null(::Type{Char}) = char_null
 # reasoning to return "" (an empty string).
 null(::Type{Any}) = any_null
 
+# aux macro
+
 macro todo(msg)
   quote
     @assert false "todo: $($msg)"
   end
 end
-
-# verbs
 
 macro dyad4char(f)
   f = esc(f)
@@ -575,6 +534,240 @@ macro dyad4dict(f, V=nothing)
       end
   end
 end
+
+# application
+
+struct PFunction
+  f::Function
+  args::Tuple
+  arity::Int
+  PFunction(f, args, narr) =
+    new(f, args, narr)
+  PFunction(f::PFunction, args, narr) =
+    new(f.f, (f.args..., args...), narr)
+end
+(s::PFunction)(args...) = s.f(s.args..., args...)
+arity(f::PFunction)::Arity = (f.arity, f.arity)
+Base.show(io::IO, s::PFunction) = print(io, "*$(s.arity)-pfunction*")
+Base.promote_op(f::PFunction, S::Type...) =
+  Base.promote_op(f.f, map(typeof, f.args)..., S...)
+
+promote_op(f, S::Type...) = _return_type(f, Tuple{S...})
+
+abstract type AFunction end
+
+KFunction = Union{Function,PFunction,AFunction}
+
+app(f::KFunction, args...) =
+  begin
+    flen, alen = arity(f), length(args)
+    if alen in flen; f(args...)
+    elseif flen[1] > alen; PFunction(f, args, flen[1] - alen)
+    else; @assert false "arity error"
+    end
+  end
+app(d::AbstractDict, key) = dictapp0(d, key)
+app(d::AbstractDict{K}, key::K) where K = dictapp0(d, key)
+app(d::AbstractDict, key::Vector) = app.(Ref(d), key)
+
+dictapp0(d::AbstractDict, key) =
+  begin
+    v = get(d, key, nothing)
+    if v === nothing
+      v = null(eltype(typeof(d)).types[2])
+    end
+    v
+  end
+
+# adverbs
+
+# fold
+
+struct FoldM <: AFunction
+  f::Any
+end
+
+struct FoldD <: AFunction
+  f::Any
+end
+
+struct Join <: AFunction
+  s::Vector{Char}
+end
+
+arity(::FoldM)::Arity = (1, 2)
+arity(::FoldD)::Arity = (1, 2)
+arity(::Join)::Arity = (1, 1)
+
+# f/ converge
+(o::FoldM)(x) =
+  begin
+    while true
+      x′ = o.f(x)
+      !(hash(x′) == hash(x) && isequal(x, x′)) || break
+      x = x′
+    end
+    x
+  end
+# f f/ while
+(o::FoldM)(x::KFunction, y) =
+  begin
+    while Bool(x(y))
+      y = o.f(y)
+    end
+    y
+  end
+# i f/ n-do
+(o::FoldM)(x::Int64, y) =
+  begin
+    i = 0
+    while i < x
+      y = o.f(y)
+      i = i + 1
+    end
+    y
+  end
+
+# F/ fold
+(o::FoldD)(x) = isempty(x) ? identity(o.f) : foldl(o.f, x)
+# x F/ seeded /  10+/1 2 3 -> 16
+(o::FoldD)(x, y) = foldl(o.f, y, init=x)
+(o::FoldD)(x::AbstractDict) = o(values(x))
+
+# C/ join
+(o::Join)(x::Vector{Vector{Char}}) =
+  begin
+    r = Char[]
+    if isempty(x); return r end
+    i, len = 1, length(x)
+    while i <= len
+      if i > 1; append!(r, o.s) end
+      @inbounds append!(r, x[i])
+      i = i + 1
+    end
+    r
+  end
+
+# TODO: I/ decode
+
+kfold(f::KFunction) = arity(f)[2] == 2 ? FoldD(f) : FoldM(f)
+kfold(s::Vector{Char}) = Join(s)
+kfold(s::Char) = Join(Char[s])
+
+# scan
+
+struct ScanM <: AFunction
+  f::Any
+end
+
+struct ScanD <: AFunction
+  f::Any
+end
+
+struct Split <: AFunction
+  s::Vector{Char}
+end
+
+arity(::ScanM)::Arity = (1, 2)
+arity(::ScanD)::Arity = (1, 2)
+arity(::Split)::Arity = (1, 1)
+
+# TODO: I\ encode
+
+#   F\ scan      +\1 2 3 -> 1 3 6
+(o::ScanD)(x) = isempty(x) ? x : accumulate(o.f, x)
+# x F\ seeded \  10+\1 2 3 -> 11 13 16
+(o::ScanD)(x, y) = isempty(y) ? y : accumulate(o.f, y, init=x)
+# i f\ n-dos     5(2*)\1 -> 1 2 4 8 16 32
+(o::ScanM)(x::Int64, y) =
+  begin
+    len = x + 1
+    T = Base.promote_op(o.f, eltype(y))
+    r = Vector{T}(undef, len)
+    @inbounds r[1] = y
+    i = 2
+    while i <= len
+      @inbounds y = r[i] = o.f(y)
+      i = i + 1
+    end
+    r
+  end
+# f f\ whiles
+(o::ScanM)(x::KFunction, y) =
+  begin
+    T = promote_type(Base.promote_op(o.f, typeof(y)), typeof(y))
+    r = T[y]
+    while Bool(x(y))
+      y = o.f(y)
+      push!(r, y)
+    end
+    r
+  end
+#   f\ converges
+(o::ScanM)(x) =
+  begin
+    T = promote_type(Base.promote_op(o.f, typeof(x)), typeof(x))
+    r = T[x]
+    while true
+      x′ = o.f(x)
+      !(hash(x′) == hash(x) && isequal(x, x′)) || break
+      x = x′
+      push!(r, x)
+    end
+    r
+  end
+# C\ split
+(o::Split)(x::Vector{Char}) = begin
+  if isempty(x); return Vector{Char}[] end
+  s, lens, lenx = o.s, length(o.s), length(x)
+  r = Vector{Char}[]
+  i, previ = 1, 1
+  stopi = lenx - lens + 1
+  while i <= stopi
+    if s == x[i:i + lens - 1]
+      @info "S" join(x[i:i+lens - 1])
+      push!(r, x[previ:i - 1])
+      previ = i = i + lens
+    else
+      @info "N" join(x[i:i+lens - 1])
+      i = i + 1
+    end
+  end
+  if previ == i
+    push!(r, x[i:end])
+  end
+  r
+end
+
+kscan(f::KFunction) = arity(f)[2] == 2 ? ScanD(f) : ScanM(f)
+kscan(s::Vector{Char}) = Split(s)
+kscan(s::Char) = Split(Char[s])
+
+# each
+
+struct EachM <: AFunction
+  f::Any
+end
+
+struct EachD <: AFunction
+  f::Any
+end
+
+arity(::EachM)::Arity = (1, 1)
+arity(::EachD)::Arity = (2, 2)
+
+#   f' each1
+(o::EachM)(x) = map(o.f, x)
+# x F' each2
+(o::EachD)(x, y) = o.f(x, y)
+(o::EachD)(x::Vector, y) = o.f.(x, y)
+(o::EachD)(x, y::Vector) = o.f.(x, y)
+(o::EachD)(x::Vector, y::Vector) =
+  (@assert length(x) == length(y); o.f.(x, y))
+
+keach(f::KFunction) = arity(f)[2] == 2 ? EachD(f) : EachM(f)
+
+# verbs
 
 # :: x
 kself(x) = x
@@ -713,7 +906,7 @@ knot(x::Float64) = Int(x == 0.0)
 knot(x::Int64) = Int(x == 0.0)
 knot(x::Char) = Int(x == '\0')
 knot(x::Symbol) = Int(x == symbol_null)
-knot(x::Union{Function,PFunction}) = Int(x == kself)
+knot(x::KFunction) = Int(x == kself)
 knot(x::Vector) = knot.(x)
 @monad4dict(knot)
 
@@ -745,7 +938,7 @@ kgroup(x::Vector) =
   end
 
 # x=y eq
-keq(x, y) = x == y
+keq(x, y) = Int(x == y)
 @dyad4char(keq)
 @dyad4vector(keq)
 @dyad4dict(keq)
@@ -818,7 +1011,7 @@ kreshape0(x, idx, it) =
   end
 
 # f#y replicate
-kreshape(x::Union{Function,PFunction}, y) = 
+kreshape(x::KFunction, y) = 
   replicate(y, x(y))
 
 # x#d take
@@ -862,7 +1055,7 @@ kdrop(x::Vector{Int64}, y::Vector) =
   end
 
 # f_Y weed out
-kdrop(x::Union{Function,PFunction}, y::Vector) =
+kdrop(x::KFunction, y::Vector) =
   filter(e -> !x(e), y)
 
 # X_i delete
@@ -892,18 +1085,10 @@ kcast(x::Int64, y::Vector{Char}) =
     end
   end
 
-# adverbs
-
-function kfold(f)
-  kfoldf(x) = isempty(x) ? identity(f) : foldl(f, x)
-  kfoldf(x::AbstractDict) = kfoldf(values(x))
-  kfoldf(x, y) = foldl(f, y, init=x)
-end
-
 end
 
 module Compile
-import ..Parse: Syntax, Node, Lit, Name, Prim, parse
+import ..Parse: Syntax, Node, Lit, Name, Prim, parse, isverb
 import ..Runtime
 
 verbs = Dict(
@@ -939,7 +1124,9 @@ verbs = Dict(
             )
 
 adverbs = Dict(
-               :(/) => Runtime.kfold,
+               :(/)        => (Runtime.kfold, 2),
+               :(\)        => (Runtime.kscan, 2),
+               Symbol("'") => (Runtime.keach, 1),
               )
 
 compile(syn::Node) =
@@ -955,19 +1142,19 @@ compile1(syn::Node) =
     f, arity, args... = syn.body
     args = map(compile1, args)
     if isempty(args); args = [Runtime.kself] end
-    if f isa Node && f.type===:verb && length(f.body)===1 &&
+    if f isa Node && f.type===:verb &&
         f.body[1] isa Prim && f.body[1].v===:(:) &&
         arity.v==2 && args[1] isa Symbol
       # assignment `n:x`
       name,rhs=args[1],args[2]
       :($name = $rhs)
-    elseif f isa Node && f.type===:verb && length(f.body)===1 &&
+    elseif f isa Node && f.type===:verb &&
         f.body[1] isa Prim && f.body[1].v===:(:) &&
         arity.v==1
       # return `:x`
       rhs=args[1]
       :(return $rhs)
-    elseif f isa Node && f.type===:verb
+    elseif isverb(f)
       @assert arity.v == 1 || arity.v === 2
       f = compilefun(f, arity.v)
       compileapp(f, args)
@@ -992,10 +1179,8 @@ compile1(syn::Node) =
     else
       :((_) -> $(body...))
     end
-  elseif syn.type===:verb
-    hasavs = length(syn.body) > 1
-    prefer_arity = hasavs ? 1 : 2
-    :($(compilefun(syn, prefer_arity)))
+  elseif isverb(syn)
+    :($(compilefun(syn, 2)))
   end
 
 compile1(syn::Name) =
@@ -1016,20 +1201,24 @@ compile1(syn::Prim) =
 
 compileapp(f, args) =
   :($(Runtime.app)($(f), $(args...)))
-
-compileapp(f, args, arity) =
-  let alen = length(args)
-    if alen in arity
+compileapp(f::Runtime.KFunction, args) =
+  begin
+    flen, alen = Runtime.arity(f), length(args)
+    if alen in flen
       :($f($(args...)))
-    elseif alen < arity[1]
-      :($(Runtime.papp)($f, $(tuple(args...)), $(arity[1] - alen)))
+    elseif alen < flen[1]
+      if !any(a -> a isa Expr, args)
+        # PFunction application doesn't produce any side effects
+        Runtime.PFunction(f, tuple(args...), flen[1] - alen)
+      else
+        :($(Runtime.PFunction)($f, $(tuple(args...)), $(flen[1] - alen)))
+      end
     else
       @assert false "invalid arity"
     end
   end
 
-compileapp(f::Union{Function,Runtime.PFunction}, args) =
-  compileapp(f, args, Runtime.arity(f))
+compilefun(syn::Lit, prefer_arity::Int64) = compile1(syn)
 
 compilefun(syn::Prim, prefer_arity::Int64) =
   begin
@@ -1043,25 +1232,21 @@ compilefun(syn::Prim, prefer_arity::Int64) =
       elseif prefer_arity == 1
         f = get(verbs, (syn.v, 1), nothing)
       else; @assert false end
-    get(verbs, (syn.v, prefer_arity), nothing)
     @assert f !== nothing "primitive is not implemented: $(syn.v) ($prefer_arity arity)"
     f
   end
 compilefun(syn::Node, prefer_arity::Int64) =
   if syn.type===:verb
-    f, avs... = syn.body
-    f = compilefun(f, isempty(avs) ? prefer_arity : 2)
-    for av in avs
-      @assert av isa Prim
-      makef = get(adverbs, av.v, nothing)
-      @assert makef !== nothing "primitive is not implemented: $(av.v)"
-      if f isa Expr
-        f = :($makef($f))
-      else
-        f = makef(f)
-      end
+    compilefun(syn.body[1], prefer_arity)
+  elseif syn.type === :adverb
+    adverb, verb_arity = get(adverbs, syn.body[1].v, (nothing, nothing))
+    @assert adverb !== nothing "adverb is not implemented: $(syn.body[1].v)"
+    verb = compilefun(syn.body[2], max(prefer_arity, verb_arity))
+    if verb isa Expr
+      :($adverb($verb))
+    else
+      adverb(verb)
     end
-    f
   else
     compile1(syn)
   end
@@ -1141,8 +1326,6 @@ function __init__()
   end
 end
 end
-
-1
 
 export k
 export @k_str
