@@ -135,6 +135,9 @@ struct Prim <: Syntax
   Prim(v::String) = new(Symbol(v))
 end
 
+struct Omit <: Syntax
+end
+
 isnoun(syn::Syntax) = !isverb(syn)
 isverb(syn::Syntax) =
   syn isa Node && (syn.type === :verb || syn.type === :adverb)
@@ -178,21 +181,30 @@ function parse(data::String)
   tokens = Tokenize.tokenize(data)
   ctx = ParseContext(tokens, 1)
   node = Node(:seq, exprs(ctx))
-  @assert peek(ctx) === :eof
+  @assert peek(ctx) === :eof "expected EOF but got $(peek(ctx))"
   node
 end
 
-function exprs(ctx::ParseContext)
+function exprs(ctx::ParseContext; parse_omit::Bool=false)
   es = Syntax[]
+  seen_semi = true
   while true
     e = expr(ctx)
     if e !== nothing
       push!(es, e)
+      seen_semi = false
+      continue
     end
     next = peek(ctx)
-    if next===:semi||next===:newline
+    if next === :semi
+      _, value = consume!(ctx)
+      seen_semi && parse_omit && push!(es, Omit())
+      seen_semi = true
+    elseif next === :newline
+      seen_semi = false
       consume!(ctx)
     else
+      seen_semi && parse_omit && length(es) > 0 && push!(es, Omit())
       return es
     end
   end
@@ -332,7 +344,7 @@ function term(ctx::ParseContext)
       nothing
     end
   if t !== nothing
-    app(t, ctx)
+    adverb(app(t, ctx), ctx)
   else
     t
   end
@@ -341,7 +353,7 @@ end
 function app(t, ctx::ParseContext)
   while peek(ctx) === :lbracket
     consume!(ctx)
-    es = exprs(ctx)
+    es = exprs(ctx, parse_omit=true)
     @assert peek(ctx) === :rbracket
     consume!(ctx)
     t = Node(:app, [t, Lit(max(1, length(es))), es...])
@@ -1088,7 +1100,7 @@ kcast(x::Int64, y::Vector{Char}) =
 end
 
 module Compile
-import ..Parse: Syntax, Node, Lit, Name, Prim, parse, isverb
+import ..Parse: Syntax, Node, Lit, Name, Omit, Prim, parse, isverb
 import ..Runtime
 
 verbs = Dict(
@@ -1140,32 +1152,53 @@ compile1(syn::Node) =
     :([$(es...)])
   elseif syn.type === :app
     f, arity, args... = syn.body
-    args = map(compile1, args)
+    args, pargs =
+      begin
+        args′, pargs = [], []
+        for arg in args
+          if arg isa Omit
+            parg = gensym()
+            push!(pargs, parg)
+            push!(args′, parg)
+          else
+            push!(args′, compile1(arg))
+          end
+        end
+        args′, pargs
+      end
     if isempty(args); args = [Runtime.kself] end
-    if f isa Node && f.type===:verb &&
-        f.body[1] isa Prim && f.body[1].v===:(:) &&
-        arity.v==2 && args[1] isa Symbol
-      # assignment `n:x`
-      name,rhs=args[1],args[2]
-      :($name = $rhs)
-    elseif f isa Node && f.type===:verb &&
-        f.body[1] isa Prim && f.body[1].v===:(:) &&
-        arity.v==1
-      # return `:x`
-      rhs=args[1]
-      :(return $rhs)
-    elseif isverb(f)
-      @assert arity.v == 1 || arity.v === 2
-      f = compilefun(f, arity.v)
-      compileapp(f, args)
-    elseif f isa Node && f.type===:fun
-      @assert arity.v === length(args)
-      f = eval(compile1(f)) # as this is a function, we can eval it now
-      compileapp(f, args)
-    else # generic case
-      @assert arity.v === length(args)
-      f = compile1(f)
-      compileapp(f, args)
+    expr = 
+      if f isa Node && f.type===:verb &&
+          f.body[1] isa Prim && f.body[1].v===:(:) &&
+          arity.v==2 && args[1] isa Symbol
+        # assignment `n:x`
+        @assert isempty(pargs)
+        name,rhs=args[1],args[2]
+        :($name = $rhs)
+      elseif f isa Node && f.type===:verb &&
+          f.body[1] isa Prim && f.body[1].v===:(:) &&
+          arity.v==1
+        # return `:x`
+        @assert isempty(pargs)
+        rhs=args[1]
+        :(return $rhs)
+      elseif isverb(f)
+        @assert arity.v == 1 || arity.v === 2
+        f = compilefun(f, arity.v)
+        compileapp(f, args)
+      elseif f isa Node && f.type===:fun
+        @assert arity.v === length(args)
+        f = eval(compile1(f)) # as this is a function, we can eval it now
+        compileapp(f, args)
+      else # generic case
+        @assert arity.v === length(args)
+        f = compile1(f)
+        compileapp(f, args)
+      end
+    if isempty(pargs)
+      expr
+    else
+      :(($(pargs...),) -> $expr)
     end
   elseif syn.type === :fun
     x,y,z=implicitargs(syn.body)
