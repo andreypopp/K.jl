@@ -585,29 +585,36 @@ abstract type AFunction end
 
 KFunction = Union{Function,PFunction,AFunction}
 
-app(x::Union{AbstractDict,Vector}, args...) =
+is_multiindex(x::Vector, i) = false
+is_multiindex(x::Vector, i::Vector) = true
+is_multiindex(x::AbstractDict, i) = false
+is_multiindex(x::AbstractDict, i::Vector) = eltype(d).types[1] != typeof(i)
+
+app(x::Union{AbstractDict,Vector}, is...) =
   begin
-    if length(args) == 1 && args[1] === kself; return x end
-    i, args... = args
-    if i == Colon(); keach′(e -> app(e, args...), x)
-    else; app(app(x, i), args...) end
+    if length(is) == 1 && is[1] === kself; return x end
+    i, is... = is
+    i === Colon() ?
+      keach′(e -> app(e, is...), x) :
+      is_multiindex(x, i) ?
+      keach′(e -> app(e, is...), app(x, i)) :
+      app(app(x, i), is...)
   end
 
-app(d::AbstractDict, key) = key === kself ? d : dapp(d, key)
-app(d::AbstractDict, key::Vector) =
-  if eltype(d).types[1] == typeof(key)
-    dapp(d, key)
-  else
-    app.(Ref(d), key)
-  end
-app(d::AbstractDict{K}, key::K) where K = dapp(d, key)
+app(d::AbstractDict, i) =
+  i === kself ? d : dapp(d, i)
+app(d::AbstractDict, i::Vector) =
+  is_multiindex(d, i) ? app.(Ref(d), i) : dapp(d, i)
+app(d::AbstractDict{K}, i::K) where K =
+  dapp(d, i)
 
 app(x::Vector, i::Int64) =
   begin
     v = get(x, i + 1, nothing)
     v === nothing ? outdex(x) : v
   end
-app(x::Vector, is::Vector) = app.(Ref(x), is)
+app(x::Vector, is::Vector) =
+  app.(Ref(x), is)
 
 app(f::KFunction, args...) =
   begin
