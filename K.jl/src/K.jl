@@ -479,6 +479,11 @@ null(::Type{Char}) = char_null
 # reasoning to return "" (an empty string).
 null(::Type{Any}) = any_null
 
+outdex′(x) = null(typeof(x))
+outdex′(x::Vector) =
+  isempty(x) ? any_null : fill(outdex(x), length(x))
+
+outdex(x) = outdex′(x)
 outdex(x::Vector{T}) where T <: Union{Float64,Int64,Symbol,Char} =
   null(eltype(x))
 outdex(x::Vector) =
@@ -487,10 +492,7 @@ outdex(x::Vector) =
     fill(outdex(v), length(v))
   end
 outdex(x::AbstractDict) =
-  isempty(x) ? any_null : begin
-    v = first(x).second
-    fill(outdex(v), length(v))
-  end
+  isempty(x) ? any_null : outdex′(first(x).second)
 
 # aux macro
 
@@ -583,7 +585,7 @@ abstract type AFunction end
 
 KFunction = Union{Function,PFunction,AFunction}
 
-app(x, args...) =
+app(x::Union{AbstractDict,Vector}, args...) =
   begin
     if length(args) == 1 && args[1] === kself; return x end
     i, args... = args
@@ -591,15 +593,19 @@ app(x, args...) =
     else; app(app(x, i), args...) end
   end
 
-app(d::AbstractDict, key) = dapp(d, key)
+app(d::AbstractDict, key) = key === kself ? d : dapp(d, key)
+app(d::AbstractDict, key::Vector) =
+  if eltype(d).types[1] == typeof(key)
+    dapp(d, key)
+  else
+    app.(Ref(d), key)
+  end
 app(d::AbstractDict{K}, key::K) where K = dapp(d, key)
-app(d::AbstractDict, key::Vector) = app.(Ref(d), key)
 
 app(x::Vector, i::Int64) =
   begin
     v = get(x, i + 1, nothing)
-    if v === nothing; v = outdex(x) end
-    v
+    v === nothing ? outdex(x) : v
   end
 app(x::Vector, is::Vector) = app.(Ref(x), is)
 
@@ -622,22 +628,22 @@ dapp(d::AbstractDict, key) =
 
 # adverbs
 
+macro adverb(name, arr)
+  quote
+    struct $(esc(name)) <: AFunction; f::Any end
+    Base.promote_op(f::$(esc(name)), S::Type...) = Base.promote_op(f.f, S...)
+    $(esc(:arity))(::$(esc(name)))::Arity = $arr
+  end
+end
+
 # fold
 
-struct FoldM <: AFunction
-  f::Any
-end
-
-struct FoldD <: AFunction
-  f::Any
-end
+@adverb FoldM (1, 2)
+@adverb FoldD (1, 2)
 
 struct Join <: AFunction
   s::Vector{Char}
 end
-
-arity(::FoldM)::Arity = (1, 2)
-arity(::FoldD)::Arity = (1, 2)
 arity(::Join)::Arity = (1, 1)
 
 # f/ converge
@@ -697,20 +703,12 @@ kfold(s::Char) = Join(Char[s])
 
 # scan
 
-struct ScanM <: AFunction
-  f::Any
-end
-
-struct ScanD <: AFunction
-  f::Any
-end
+@adverb ScanM (1, 2)
+@adverb ScanD (1, 2)
 
 struct Split <: AFunction
   s::Vector{Char}
 end
-
-arity(::ScanM)::Arity = (1, 2)
-arity(::ScanD)::Arity = (1, 2)
 arity(::Split)::Arity = (1, 1)
 
 # TODO: I\ encode
@@ -786,16 +784,8 @@ kscan(s::Char) = Split(Char[s])
 
 # each
 
-struct EachM <: AFunction
-  f::Any
-end
-
-struct EachD <: AFunction
-  f::Any
-end
-
-arity(::EachM)::Arity = (1, 1)
-arity(::EachD)::Arity = (2, 2)
+@adverb EachM (1, 1)
+@adverb EachD (2, 2)
 
 #   f' each1
 (o::EachM)(x) = keach′(o.f, x)
