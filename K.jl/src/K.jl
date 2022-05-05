@@ -479,8 +479,18 @@ null(::Type{Char}) = char_null
 # reasoning to return "" (an empty string).
 null(::Type{Any}) = any_null
 
-outdex(x::Vector{T}) where T <: Union{Float64,Int64,Symbol,Char} = null(eltype(x))
-outdex(x::Vector) = isempty(x) ? any_null : fill(outdex(x[1]), length(x[1]))
+outdex(x::Vector{T}) where T <: Union{Float64,Int64,Symbol,Char} =
+  null(eltype(x))
+outdex(x::Vector) =
+  isempty(x) ? any_null : begin
+    @inbounds v = x[1]
+    fill(outdex(v), length(v))
+  end
+outdex(x::AbstractDict) =
+  isempty(x) ? any_null : begin
+    v = first(x).second
+    fill(outdex(v), length(v))
+  end
 
 # aux macro
 
@@ -573,6 +583,26 @@ abstract type AFunction end
 
 KFunction = Union{Function,PFunction,AFunction}
 
+app(x, args...) =
+  begin
+    if length(args) == 1 && args[1] === kself; return x end
+    i, args... = args
+    if i == Colon(); keach′(e -> app(e, args...), x)
+    else; app(app(x, i), args...) end
+  end
+
+app(d::AbstractDict, key) = dapp(d, key)
+app(d::AbstractDict{K}, key::K) where K = dapp(d, key)
+app(d::AbstractDict, key::Vector) = app.(Ref(d), key)
+
+app(x::Vector, i::Int64) =
+  begin
+    v = get(x, i + 1, nothing)
+    if v === nothing; v = outdex(x) end
+    v
+  end
+app(x::Vector, is::Vector) = app.(Ref(x), is)
+
 app(f::KFunction, args...) =
   begin
     flen, alen = arity(f), length(args)
@@ -581,30 +611,11 @@ app(f::KFunction, args...) =
     else; @assert false "arity error"
     end
   end
-app(d::AbstractDict, key) = dictapp0(d, key)
-app(d::AbstractDict{K}, key::K) where K = dictapp0(d, key)
-app(d::AbstractDict, key::Vector) = app.(Ref(d), key)
 
-app(x::Vector, i::Int64) =
-  get(() -> outdex(x), x, i + 1)
-app(x::Vector, args...) =
-  begin
-    if length(args) == 1 && args[1] === kself; return x end
-    @assert !isempty(args)
-    i, args... = args
-    if i == Colon()
-      map(e -> app(e, args...), x)
-    else
-      app(app(x, i), args...)
-    end
-  end
-
-dictapp0(d::AbstractDict, key) =
+dapp(d::AbstractDict, key) =
   begin
     v = get(d, key, nothing)
-    if v === nothing
-      v = null(eltype(typeof(d)).types[2])
-    end
+    if v === nothing; v = outdex(d) end
     v
   end
 
@@ -787,7 +798,7 @@ arity(::EachM)::Arity = (1, 1)
 arity(::EachD)::Arity = (2, 2)
 
 #   f' each1
-(o::EachM)(x) = map(o.f, x)
+(o::EachM)(x) = keach′(o.f, x)
 # x F' each2
 (o::EachD)(x, y) = o.f(x, y)
 (o::EachD)(x::Vector, y) = o.f.(x, y)
@@ -796,6 +807,9 @@ arity(::EachD)::Arity = (2, 2)
   (@assert length(x) == length(y); o.f.(x, y))
 
 keach(f::KFunction) = arity(f)[2] == 2 ? EachD(f) : EachM(f)
+
+keach′(f, x) = map(f, x)
+keach′(f, d::AbstractDict) = OrderedDict(zip(keys(d), map(f, values(d))))
 
 # verbs
 
@@ -1046,7 +1060,7 @@ kreshape(x::KFunction, y) =
 
 # x#d take
 kreshape(x::Vector, y::AbstractDict) = 
-  OrderedDict(zip(x, dictapp0.(Ref(y), x)))
+  OrderedDict(zip(x, dapp.(Ref(y), x)))
 
 # _n floor
 kfloor(x::Union{Int64, Float64}) = floor(x)
