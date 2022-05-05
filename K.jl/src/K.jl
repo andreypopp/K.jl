@@ -105,7 +105,7 @@ end
 
 int_null = typemin(Int64)
 float_null = NaN
-any_null = []
+any_null = Char[]
 char_null = ' '
 symbol_null = Symbol("")
 
@@ -479,6 +479,9 @@ null(::Type{Char}) = char_null
 # reasoning to return "" (an empty string).
 null(::Type{Any}) = any_null
 
+outdex(x::Vector{T}) where T <: Union{Float64,Int64,Symbol,Char} = null(eltype(x))
+outdex(x::Vector) = isempty(x) ? any_null : fill(outdex(x[1]), length(x[1]))
+
 # aux macro
 
 macro todo(msg)
@@ -582,6 +585,20 @@ app(d::AbstractDict, key) = dictapp0(d, key)
 app(d::AbstractDict{K}, key::K) where K = dictapp0(d, key)
 app(d::AbstractDict, key::Vector) = app.(Ref(d), key)
 
+app(x::Vector, i::Int64) =
+  get(() -> outdex(x), x, i + 1)
+app(x::Vector, args...) =
+  begin
+    if length(args) == 1 && args[1] === kself; return x end
+    @assert !isempty(args)
+    i, args... = args
+    if i == Colon()
+      map(e -> app(e, args...), x)
+    else
+      app(app(x, i), args...)
+    end
+  end
+
 dictapp0(d::AbstractDict, key) =
   begin
     v = get(d, key, nothing)
@@ -590,6 +607,7 @@ dictapp0(d::AbstractDict, key) =
     end
     v
   end
+
 
 # adverbs
 
@@ -1167,38 +1185,32 @@ compile1(syn::Node) =
         args′, pargs
       end
     if isempty(args); args = [Runtime.kself] end
-    expr = 
-      if f isa Node && f.type===:verb &&
-          f.body[1] isa Prim && f.body[1].v===:(:) &&
-          arity.v==2 && args[1] isa Symbol
-        # assignment `n:x`
-        @assert isempty(pargs)
-        name,rhs=args[1],args[2]
-        :($name = $rhs)
-      elseif f isa Node && f.type===:verb &&
-          f.body[1] isa Prim && f.body[1].v===:(:) &&
-          arity.v==1
-        # return `:x`
-        @assert isempty(pargs)
-        rhs=args[1]
-        :(return $rhs)
-      elseif isverb(f)
-        @assert arity.v == 1 || arity.v === 2
-        f = compilefun(f, arity.v)
-        compileapp(f, args)
-      elseif f isa Node && f.type===:fun
-        @assert arity.v === length(args)
-        f = eval(compile1(f)) # as this is a function, we can eval it now
-        compileapp(f, args)
-      else # generic case
-        @assert arity.v === length(args)
-        f = compile1(f)
-        compileapp(f, args)
-      end
-    if isempty(pargs)
-      expr
-    else
-      :(($(pargs...),) -> $expr)
+    if f isa Node && f.type===:verb &&
+        f.body[1] isa Prim && f.body[1].v===:(:) &&
+        arity.v==2 && args[1] isa Symbol
+      # assignment `n:x`
+      @assert isempty(pargs) "cannot project n:x"
+      name,rhs=args[1],args[2]
+      :($name = $rhs)
+    elseif f isa Node && f.type===:verb &&
+        f.body[1] isa Prim && f.body[1].v===:(:) &&
+        arity.v==1
+      # return `:x`
+      @assert isempty(pargs) "cannot project :x"
+      rhs=args[1]
+      :(return $rhs)
+    elseif isverb(f)
+      @assert arity.v == 1 || arity.v === 2
+      f = compilefun(f, arity.v)
+      compileapp(f, args, pargs)
+    elseif f isa Node && f.type===:fun
+      @assert arity.v === length(args)
+      f = compile1(f)
+      compileapp(f, args, pargs)
+    else # generic case
+      @assert arity.v === length(args)
+      f = compile1(f)
+      compileapp(f, args, pargs)
     end
   elseif syn.type === :fun
     x,y,z=implicitargs(syn.body)
@@ -1232,6 +1244,27 @@ compile1(syn::Lit) =
 compile1(syn::Prim) =
   :($(compilefun(syn, 2)))
 
+compileapp(f, args, pargs) =
+  if isempty(pargs); compileapp(f, args)
+  else
+    f′ = gensym("f")
+    expr = compileapp(f′, args)
+    :(let $f′ = $f
+        if $f′ isa $(Runtime.KFunction)
+          ($(pargs...),) -> $expr
+        else
+          let $(map(arg -> :($arg = :), pargs)...)
+            $expr
+          end
+        end
+      end)
+  end
+compileapp(f::Runtime.KFunction, args, pargs) =
+  if isempty(pargs); compileapp(f, args)
+  else
+    expr = compileapp(f, args)
+    :(($(pargs...),) -> $expr)
+  end
 compileapp(f, args) =
   :($(Runtime.app)($(f), $(args...)))
 compileapp(f::Runtime.KFunction, args) =
@@ -1286,10 +1319,7 @@ compilefun(syn::Node, prefer_arity::Int64) =
 
 implicitargs(syn::Name) =
   syn.v===:x,syn.v===:y,syn.v===:z
-implicitargs(syn::Lit) =
-  false,false,false
-implicitargs(syn::Prim) =
-  false,false,false
+implicitargs(syn::Union{Omit,Lit,Prim}) = false,false,false
 implicitargs(syn::Node) =
   if syn.type === :fun; false,false,false
   else; implicitargs(syn.body)

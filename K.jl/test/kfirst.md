@@ -35,7 +35,7 @@ It also works on atoms, in this case the atom itself is returned:
 In case a list is empty the "null" element is returned:
 
     julia> k"*()"
-    Any[]
+    Char[]
 
     julia> k"*!0"
     -9223372036854775808
