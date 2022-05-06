@@ -375,8 +375,29 @@ module Runtime
 
 import ..int_null, ..float_null, ..any_null
 
+# K-specific function types
+
+abstract type AFunction end
+
+struct PFunction
+  f::Function
+  args::Tuple
+  arity::Int
+  PFunction(f, args, narr) =
+    new(f, args, narr)
+  PFunction(f::PFunction, args, narr) =
+    new(f.f, (f.args..., args...), narr)
+end
+(s::PFunction)(args...) = s.f(s.args..., args...)
+Base.show(io::IO, s::PFunction) = print(io, "*$(s.arity)-pfunction*")
+Base.promote_op(f::PFunction, S::Type...) =
+  Base.promote_op(f.f, map(typeof, f.args)..., S...)
+
+# Arity (min, max)
+
 Arity = Tuple{Int8, Int8}
 
+arity(f::PFunction)::Arity = (f.arity, f.arity)
 arity(f::Function)::Arity =
   begin
     monad,dyad,arity = false,false,0
@@ -398,6 +419,11 @@ arity(f::Function)::Arity =
     end
   end
 
+# K-types
+
+KAtom = Union{Float64,Int64,Symbol,Char}
+KFunction = Union{Function,PFunction,AFunction}
+
 replicate(v, n) =
   reduce(vcat, fill.(v, n))
 
@@ -410,7 +436,6 @@ identity(f) =
   elseif f === kor; 0
   else; Char[]
   end
-
 
 isequal(x, y) = false
 isequal(x::T, y::T) where T = x == y
@@ -436,6 +461,8 @@ isequal(x::AbstractDict{K,V}, y::AbstractDict{K,V}) where {K,V} =
     return true
   end
 
+# K dicts
+
 import Base: <, <=, ==, convert, length, isempty, iterate, delete!,
                  show, dump, empty!, getindex, setindex!, get, get!,
                  in, haskey, keys, merge, copy, cat,
@@ -454,7 +481,6 @@ import Base: <, <=, ==, convert, length, isempty, iterate, delete!,
                  copymutable, emptymutable, dict_with_eltype
 include("dict_support.jl")
 include("ordered_dict.jl")
-
 
 isequal(x::OrderedDict{K,V}, y::OrderedDict{K,V}) where {K,V} =
   begin
@@ -479,12 +505,45 @@ null(::Type{Char}) = char_null
 # reasoning to return "" (an empty string).
 null(::Type{Any}) = any_null
 
+# rank
+
+non_urank = typemax(Int64)
+
+rank(x) = 0
+rank(x::Vector{T}) where T<:KAtom = 1
+rank(x::Vector{Vector{T}}) where T<:KAtom = 2
+rank(x::Vector) =
+  begin
+    if isempty(x)
+      return 2 # 1 + rank(null(eltype(x)))
+    else
+      r = nothing
+      for e in x
+        r′ = rank(e)
+        if r === nothing; r = r′
+        elseif r !== r′; return non_urank end
+      end
+      1 + r
+    end
+  end
+
+urank(x) = 0
+urank(x::Vector{T}) where T<:KAtom = 1
+urank(x::Vector) =
+  begin
+    if isempty(x)
+      return 2 # 1 + rank(null(eltype(x)))
+    else
+      @inbounds 1 + rank(x[1])
+    end
+  end
+
 outdex′(x) = null(typeof(x))
 outdex′(x::Vector) =
   isempty(x) ? any_null : fill(outdex(x), length(x))
 
 outdex(x) = outdex′(x)
-outdex(x::Vector{T}) where T <: Union{Float64,Int64,Symbol,Char} =
+outdex(x::Vector{T}) where T <: KAtom =
   null(eltype(x))
 outdex(x::Vector) =
   isempty(x) ? any_null : begin
@@ -493,6 +552,77 @@ outdex(x::Vector) =
   end
 outdex(x::AbstractDict) =
   isempty(x) ? any_null : outdex′(first(x).second)
+
+# application
+
+app(f::KFunction, args...) =
+  begin
+    flen, alen = arity(f), length(args)
+    if alen in flen; f(args...)
+    elseif flen[1] > alen; PFunction(f, args, flen[1] - alen)
+    else; @assert false "arity error"
+    end
+  end
+
+app(x::Vector, is...) =
+  begin
+    i, is... = is
+    i === Colon() ?
+      keach′(e -> app(e, is...), x) :
+      i isa Vector || i isa AbstractDict ?
+      keach′(e -> app(e, is...), app(x, i)) :
+      app(app(x, i), is...)
+  end
+app(x::Vector, ::Colon) = x
+app(x::Vector, i::Int64) =
+  (v = get(x, i + 1, nothing); v === nothing ? outdex(x) : v)
+app(x::Vector, is::Vector) =
+  app.(Ref(x), is)
+app(x::Vector, is::AbstractDict) =
+  OrderedDict(zip(keys(is), app(x, collect(values(is)))))
+
+app(x::AbstractDict, is...) =
+  begin
+    k, is... = is
+    krank, xrank = rank(k), urank(first(x).first)
+    @assert krank >= xrank "rank error"
+    k === Colon() ?
+      keach′(e -> app(e, is...), x) :
+      krank > xrank ?
+      keach′(e -> app(e, is...),
+             krank === non_urank ?
+             app.(Ref(x), k) :
+             dappX(x, krank - xrank, k)) :
+      app(dapp(x, k), is...)
+  end
+app(x::AbstractDict, ::Colon) = x
+app(x::AbstractDict, i) =
+  i === kself ? x : begin
+    xrank = urank(first(x).first)
+    @assert xrank == 0 "rank error"
+    dapp(x, i)
+  end
+app(x::AbstractDict, i::Vector) =
+  begin
+    xrank, irank = urank(first(x).first), rank(i)
+    @assert xrank <= irank "rank error"
+    xrank === irank ?
+      dapp(x, i) :
+      irank === non_urank ?
+      app.(Ref(x), i) :
+      dappX(x, irank - xrank, i)
+  end
+app(x::AbstractDict, i::AbstractDict) =
+  OrderedDict(zip(keys(i), app(x, collect(values(i)))))
+
+dapp(d::AbstractDict, key) =
+  begin
+    v = get(d, key, nothing)
+    if v === nothing; v = outdex(d) end
+    v
+  end
+dappX(d::AbstractDict, depth, key) =
+  depth === 0 ? dapp(d, key) : dappX.(Ref(d), depth - 1, key)
 
 # aux macro
 
@@ -516,8 +646,7 @@ macro dyad4vector(f)
   quote
     $f(x::Vector, y) = $f.(x, y)
     $f(x, y::Vector) = $f.(x, y)
-    $f(x::Vector, y::Vector) =
-      (@assert length(x) == length(y); $f.(x, y))
+    $f(x::Vector, y::Vector) = (@assert length(x) == length(y); $f.(x, y))
   end
 end
 
@@ -561,77 +690,6 @@ macro dyad4dict(f, V=nothing)
       end
   end
 end
-
-# application
-
-struct PFunction
-  f::Function
-  args::Tuple
-  arity::Int
-  PFunction(f, args, narr) =
-    new(f, args, narr)
-  PFunction(f::PFunction, args, narr) =
-    new(f.f, (f.args..., args...), narr)
-end
-(s::PFunction)(args...) = s.f(s.args..., args...)
-arity(f::PFunction)::Arity = (f.arity, f.arity)
-Base.show(io::IO, s::PFunction) = print(io, "*$(s.arity)-pfunction*")
-Base.promote_op(f::PFunction, S::Type...) =
-  Base.promote_op(f.f, map(typeof, f.args)..., S...)
-
-promote_op(f, S::Type...) = _return_type(f, Tuple{S...})
-
-abstract type AFunction end
-
-KFunction = Union{Function,PFunction,AFunction}
-
-is_multiindex(x::Vector, i) = false
-is_multiindex(x::Vector, i::Vector) = true
-is_multiindex(x::AbstractDict, i) = false
-is_multiindex(x::AbstractDict, i::Vector) = eltype(d).types[1] != typeof(i)
-
-app(x::Union{AbstractDict,Vector}, is...) =
-  begin
-    if length(is) == 1 && is[1] === kself; return x end
-    i, is... = is
-    i === Colon() ?
-      keach′(e -> app(e, is...), x) :
-      is_multiindex(x, i) ?
-      keach′(e -> app(e, is...), app(x, i)) :
-      app(app(x, i), is...)
-  end
-
-app(d::AbstractDict, i) =
-  i === kself ? d : dapp(d, i)
-app(d::AbstractDict, i::Vector) =
-  is_multiindex(d, i) ? app.(Ref(d), i) : dapp(d, i)
-app(d::AbstractDict{K}, i::K) where K =
-  dapp(d, i)
-
-app(x::Vector, i::Int64) =
-  begin
-    v = get(x, i + 1, nothing)
-    v === nothing ? outdex(x) : v
-  end
-app(x::Vector, is::Vector) =
-  app.(Ref(x), is)
-
-app(f::KFunction, args...) =
-  begin
-    flen, alen = arity(f), length(args)
-    if alen in flen; f(args...)
-    elseif flen[1] > alen; PFunction(f, args, flen[1] - alen)
-    else; @assert false "arity error"
-    end
-  end
-
-dapp(d::AbstractDict, key) =
-  begin
-    v = get(d, key, nothing)
-    if v === nothing; v = outdex(d) end
-    v
-  end
-
 
 # adverbs
 
@@ -771,11 +829,9 @@ arity(::Split)::Arity = (1, 1)
   stopi = lenx - lens + 1
   while i <= stopi
     if s == x[i:i + lens - 1]
-      @info "S" join(x[i:i+lens - 1])
       push!(r, x[previ:i - 1])
       previ = i = i + lens
     else
-      @info "N" join(x[i:i+lens - 1])
       i = i + 1
     end
   end
@@ -970,8 +1026,6 @@ kgroup(x::Vector) =
   begin
     g = OrderedDict{eltype(x),Vector{Int64}}()
     allocg = Vector{Int64}
-    # TODO: this is not correct right now as OrderedDict uses isequal and not
-    # kmatch as it should be.
     for (n, xe) in enumerate(x)
       push!(get!(allocg, g, xe), n - 1)
     end
@@ -1003,15 +1057,15 @@ knull(x::Vector) = knull.(x)
 @monad4dict(knull)
 
 # a^y fill
-kfill(x::Union{Number,Char,Symbol}, y) =
+kfill(x::KAtom, y) =
   y == int_null ||
   y === float_null ||
   y == symbol_null ||
   y == char_null ||
   y == any_null ?
   x : y
-kfill(x::Union{Number,Char,Symbol}, y::Vector) = kfill.(x, y)
-kfill(x::Union{Number,Char,Symbol}, y::AbstractDict) =
+kfill(x::KAtom, y::Vector) = kfill.(x, y)
+kfill(x::KAtom, y::AbstractDict) =
   OrderedDict(zip(keys(y), kfill.(x, values(y))))
 
 # X^y without
@@ -1057,7 +1111,7 @@ kreshape(x::KFunction, y) =
 
 # x#d take
 kreshape(x::Vector, y::AbstractDict) = 
-  OrderedDict(zip(x, dapp.(Ref(y), x)))
+  OrderedDict(zip(x, app.(Ref(y), x)))
 
 # _n floor
 kfloor(x::Union{Int64, Float64}) = floor(x)
@@ -1104,7 +1158,7 @@ kdrop(x::Vector, y::Int64) =
   y < 0 || y >= length(x) ? x : deleteat!(copy(x), [y+1])
 
 # $x string
-kstring(x::Union{Int64,Float64,Symbol}) = collect(string(x))
+kstring(x::KAtom) = collect(string(x))
 kstring(x::Vector) = kstring.(x)
 @monad4dict(kstring)
 

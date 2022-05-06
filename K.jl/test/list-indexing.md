@@ -27,6 +27,13 @@ The values will be arranged to the same shape as indices passed:
      [2, 3]
      [4, 5]
 
+It's also possible to index with a dict:
+
+    julia> k"1 2 3 4 5[`one`two!0 1]"
+    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
+      :one => 1
+      :two => 2
+
 If we try to index out of bounds we get null values:
 
     julia> k"1.0 2 3 4 5[10]"
@@ -76,6 +83,17 @@ Lists of indices can be used as well when passing multiple indices:
      [1, 2]
      [3, 4]
 
+    julia> k"(1 2; 3 4; 5 6)[0 1;]"
+    2-element Vector{Vector{Int64}}:
+     [1, 2]
+     [3, 4]
+
+    julia> k"(1 2; 3 4; 5 6)[;]"
+    3-element Vector{Vector{Int64}}:
+     [1, 2]
+     [3, 4]
+     [5, 6]
+
 Note how `f[X;y]` and `f[X][y]` are different.
 
 `f[X;y]` computes a list of `f[x;y]` for each `x` in `X`:
@@ -91,6 +109,35 @@ while `f[X][y]` computes `f[X]` and then indexing into it with `y`:
     2-element Vector{Int64}:
      3
      4
+
+Lists containing dicts:
+
+    julia> k"dicts: (`a`b!1 2; `a`b!3 4)";
+
+    julia> k"dicts[;`a]"
+    2-element Vector{Int64}:
+     1
+     3
+
+    julia> k"dicts[;`a`a]"
+    2-element Vector{Vector{Int64}}:
+     [1, 1]
+     [3, 3]
+
+    julia> k"dicts[0;]"
+    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
+      :a => 1
+      :b => 2
+
+    julia> k"dicts[0 1;]"
+    2-element Vector{K.Runtime.OrderedDict{Symbol, Int64}}:
+     K.Runtime.OrderedDict(:a => 1, :b => 2)
+     K.Runtime.OrderedDict(:a => 3, :b => 4)
+
+    julia> k"dicts[;]"
+    2-element Vector{K.Runtime.OrderedDict{Symbol, Int64}}:
+     K.Runtime.OrderedDict(:a => 1, :b => 2)
+     K.Runtime.OrderedDict(:a => 3, :b => 4)
 
 Another thing to note that a single `f[x;y]` indexing can call into functions
 selected by previous indices:
