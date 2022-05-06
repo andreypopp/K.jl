@@ -1187,6 +1187,33 @@ kcast(x::Int64, y::Vector{Char}) =
     end
   end
 
+# ?i rand
+kuniq(x::Int64) = rand(x)
+
+# ?X uniq
+kuniq(x::Vector) =
+  begin
+    T = eltype(x)
+    o, m = T[], OrderedDict{T,Bool}()
+    @inbounds for i in 1:length(x)
+      e = x[i]
+      idx = ht_keyindex2(m, e)
+      if idx < 0
+        push!(o, e)
+        _setindex!(m, true, e, -idx)
+      end
+    end
+    o
+  end
+
+# .d values
+kget(x::AbstractDict) = collect(values(x))
+
+# x.y appn
+kappn(x, y) = app(x, y)
+kappn(x, y::Vector) = app(x, y...)
+kappn(x, y::AbstractDict) = @assert false "type"
+
 end
 
 module Compile
@@ -1223,6 +1250,10 @@ verbs = Dict(
              (       :(_),  1) => Runtime.kfloor,
              (       :(_),  2) => Runtime.kdrop,
              (       :($),  1) => Runtime.kstring,
+             ( Symbol('?'), 1) => Runtime.kuniq,
+             ( Symbol('@'), 2) => Runtime.app,
+             ( Symbol('.'), 1) => Runtime.kget,
+             ( Symbol('.'), 2) => Runtime.kappn,
             )
 
 adverbs = Dict(
