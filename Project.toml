@@ -1,7 +1,13 @@
 [deps]
 AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
 Automa = "67c07d97-cdcb-5c2c-af73-a7f9c32a568b"
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+JSONLines = "24c2b838-1c8b-4567-aca0-d45e60436bb9"
 K = "0e651bef-d0e7-4b42-b08d-2a7a2dfec234"
 MethodAnalysis = "85b6ec6f-f7df-4429-9514-a64bcd9ee824"
 NarrativeTest = "9563631e-acd4-5dd8-bebb-4cf36518960d"
+REPLVim = "2a140ba1-97ad-47e0-ac3b-8e555ea992ff"
 Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+StructTypes = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
