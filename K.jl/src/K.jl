@@ -1114,10 +1114,11 @@ kreshape(x::Vector, y::AbstractDict) =
   OrderedDict(zip(x, app.(Ref(y), x)))
 
 # _n floor
-kfloor(x::Union{Int64, Float64}) = floor(x)
+kfloor(x::Int64) = x
+kfloor(x::Float64) = floor(Int64, x)
 
 # _c lowercase
-kfloor(x::Union{Char,Vector{Char}}) = lowercase(x)
+kfloor(x::Union{Char}) = lowercase(x)
 
 kfloor(x::Vector) = kfloor.(x)
 @monad4dict(kfloor)
@@ -1131,14 +1132,19 @@ kdrop(x::Int64, y::AbstractDict) =
     vs = kdrop(x, collect(values(y)))
     OrderedDict(zip(ks, vs))
   end
+kdrop(x, y::AbstractDict) =
+  haskey(y, x) ?
+    OrderedDict(filter(item -> 0==kmatch(item.first, x), y)) :
+    y
 
 # I_Y cut
 kdrop(x::Vector{Int64}, y::Vector) =
   begin
-    if isempty(y); return Any[] end
     o = Vector{eltype(y)}[]
+    len = length(y)
     previ = -1
-    @inbounds for i in x
+    for i in x
+      @assert i < len + 1 "domain error"
       if previ != -1
         @assert i >= previ
         push!(o, y[previ + 1:i])
@@ -1149,13 +1155,14 @@ kdrop(x::Vector{Int64}, y::Vector) =
     o
   end
 
-# f_Y weed out
-kdrop(x::KFunction, y::Vector) =
-  filter(e -> !x(e), y)
+# f_Y filter out
+kdrop(x::KFunction, y::Vector) = y[0 .=== x(y)]
 
 # X_i delete
 kdrop(x::Vector, y::Int64) =
   y < 0 || y >= length(x) ? x : deleteat!(copy(x), [y+1])
+kdrop(x::AbstractDict, y) =
+  delete!(copy(x), y)
 
 # $x string
 kstring(x::KAtom) = collect(string(x))
