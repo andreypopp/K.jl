@@ -459,8 +459,10 @@ import ..Null
 
 abstract type AFunction end
 
-struct PFunction
-  f::Function
+KFunction = Union{Function,AFunction}
+
+struct PFunction <: AFunction
+  f::KFunction
   args::Tuple
   arity::Int
   PFunction(f, args, narr) =
@@ -502,7 +504,6 @@ arity(f::Function)::Arity =
 # K-types
 
 KAtom = Union{Float64,Int64,Symbol,Char}
-KFunction = Union{Function,PFunction,AFunction}
 
 replicate(v, n) =
   reduce(vcat, fill.(v, n))
@@ -842,7 +843,7 @@ arity(::Join)::Arity = (1, 1)
 
 # TODO: I/ decode
 
-kfold(f::KFunction) = arity(f)[2] == 2 ? FoldD(f) : FoldM(f)
+kfold(f::KFunction) = arity(f)[1] == 2 ? FoldD(f) : FoldM(f)
 kfold(s::Vector{Char}) = Join(s)
 kfold(s::Char) = Join(Char[s])
 
@@ -921,7 +922,7 @@ arity(::Split)::Arity = (1, 1)
   r
 end
 
-kscan(f::KFunction) = arity(f)[2] == 2 ? ScanD(f) : ScanM(f)
+kscan(f::KFunction) = arity(f)[1] == 2 ? ScanD(f) : ScanM(f)
 kscan(s::Vector{Char}) = Split(s)
 kscan(s::Char) = Split(Char[s])
 
@@ -939,7 +940,7 @@ kscan(s::Char) = Split(Char[s])
 (o::EachD)(x::Vector, y::Vector) =
   (@assert length(x) == length(y); o.f.(x, y))
 
-keach(f::KFunction) = arity(f)[2] == 2 ? EachD(f) : EachM(f)
+keach(f::KFunction) = arity(f)[1] == 2 ? EachD(f) : EachM(f)
 
 keach′(f, x) = map(f, x)
 keach′(f, d::AbstractDict) = OrderedDict(zip(keys(d), map(f, values(d))))
@@ -1461,21 +1462,22 @@ compilefun(syn::Adverb) =
     adverb = get(adverbs, syn.v, (nothing, nothing))
     @assert adverb !== nothing "adverb is not implemented: $(syn.v)"
     verb = compilefun(syn.arg)
-    if verb isa Expr
-      :($adverb($verb))
-    else
+    if verb isa Runtime.KFunction
       adverb(verb)
+    else
+      :($adverb($verb))
     end
   end
 
 implicitargs(syn::Id) = syn.v===:x,syn.v===:y,syn.v===:z
-implicitargs(syn::Union{Omit,Lit,Verb,Fun,Adverb}) = false,false,false
+implicitargs(syn::Union{Omit,Lit,Verb,Fun}) = false,false,false
+implicitargs(syn::Union{Adverb}) = implicitargs([syn.arg])
 implicitargs(syn::App) = implicitargs([syn.head, syn.args...])
 implicitargs(syn::Fun) = false,false,false
 implicitargs(syn::LBind) = implicitargs(syn.arg)
 implicitargs(syn::Train) = implicitargs([syn.head, syn.next])
 implicitargs(syn::Seq) = implicitargs(syn.body)
-implicitargs(syns::Vector{Syn}) =
+implicitargs(syns::Vector) =
   begin
     x,y,z=false,false,false
     for syn in syns
