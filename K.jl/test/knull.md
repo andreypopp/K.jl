@@ -5,45 +5,45 @@
 `^x` checks if `x` is a "null" value:
 
     julia> k"^1"
-    false
+    0
 
     julia> k"^0"
-    false
+    0
 
     julia> k"^0N"
-    true
+    1
 
     julia> k"^1.0"
-    false
+    0
 
     julia> k"^0.0"
-    false
+    0
 
     julia> k"^0n"
-    true
+    1
 
     julia> k"^0w"
-    false
+    0
 
     julia> k""" ^"\0" """
-    false
+    0
 
     julia> k""" ^" " """
-    true
+    1
 
     julia> k""" ^"a" """
-    false
+    0
 
     julia> k""" ^`a """
-    false
+    0
     
     julia> k""" ^` """
-    true
+    1
 
 `^X` distributes `^` along `X` values:
     
     julia> k""" ^"hel \0" """
-    5-element BitVector:
+    5-element Vector{Int64}:
      0
      0
      0
@@ -51,7 +51,7 @@
      0
     
     julia> k""" ^1 2 3 0N 4 """
-    5-element BitVector:
+    5-element Vector{Int64}:
      0
      0
      0
@@ -59,18 +59,18 @@
      0
     
     julia> k""" ^`a``c """
-    3-element BitVector:
+    3-element Vector{Int64}:
      0
      1
      0
 
     julia> k""" ^(1 2; 0N 4) """
-    2-element Vector{BitVector}:
+    2-element Vector{Vector{Int64}}:
      [0, 0]
      [1, 0]
     
     julia> k""" ^"" """
-    0-element BitVector
+    Int64[]
     
     julia> k""" ^() """
     Any[]
@@ -78,6 +78,6 @@
 `^d` distributes `^` along `d` values:
 
     julia> k"^`a`b!1 0N"
-    K.Runtime.OrderedDict{Symbol, Bool} with 2 entries:
+    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
       :a => 0
       :b => 1

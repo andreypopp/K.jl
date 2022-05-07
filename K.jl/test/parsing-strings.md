@@ -5,18 +5,18 @@
 Chars:
 
     julia> K.parse("\"c\"")
-    Node(seq)
+    Seq
     └─ Lit("c")
 
     julia> K.parse("\"some\"")
-    Node(seq)
+    Seq
     └─ Lit("some")
 
     julia> K.parse("\"so\\\"me\"")
-    Node(seq)
+    Seq
     └─ Lit("so\"me")
 
     julia> K.parse("\"so\nme\"")
-    Node(seq)
+    Seq
     └─ Lit("so\nme")
 

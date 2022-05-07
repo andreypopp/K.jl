@@ -5,30 +5,30 @@
 Symbols:
 
     julia> K.parse("`some")
-    Node(seq)
+    Seq
     └─ Lit(:some)
     
     julia> K.parse("`")
-    Node(seq)
+    Seq
     └─ Lit(Symbol(""))
     
 Lists of symbol (stranding):
 
     julia> K.parse("`some`another")
-    Node(seq)
-    └─ Node(seq)
+    Seq
+    └─ Seq
        ├─ Lit(:some)
        └─ Lit(:another)
     
     julia> K.parse("`some`")
-    Node(seq)
-    └─ Node(seq)
+    Seq
+    └─ Seq
        ├─ Lit(:some)
        └─ Lit(Symbol(""))
     
     julia> K.parse("```some`")
-    Node(seq)
-    └─ Node(seq)
+    Seq
+    └─ Seq
        ├─ Lit(Symbol(""))
        ├─ Lit(Symbol(""))
        ├─ Lit(:some)

@@ -103,56 +103,97 @@ end
 
 end
 
+module Null
 int_null = typemin(Int64)
 float_null = NaN
-any_null = Char[]
 char_null = ' '
 symbol_null = Symbol("")
+any_null = Char[]
 
-module Parse
-import ..Tokenize: Token
+null(::Type{Float64}) = float_null
+null(::Type{Int64}) = int_null
+null(::Type{Symbol}) = symbol_null
+null(::Type{Char}) = char_null
+# See https://chat.stackexchange.com/transcript/message/58631508#58631508 for a
+# reasoning to return "" (an empty string).
+null(::Type{Any}) = any_null
 
-abstract type Syntax end
-
-struct Node <: Syntax
-  type::Symbol
-  body::Vector{Syntax}
+isnull(x::Int64) = x == int_null
+isnull(x::Float64) = x === float_null
+isnull(x::Symbol) = x === symbol_null
+isnull(x::Char) = x === char_null
 end
 
-struct Lit <: Syntax
+module Syntax
+
+abstract type Syn end
+
+export Syn,Seq,App,Fun,Lit,Ve,Adv,Name,Omit
+
+struct Seq <: Syn
+  body::Vector{Syn}
+end
+
+struct App <: Syn
+  head::Syn
+  args::Vector{Syn}
+  App(head::Syn, args::Syn...) = new(head, collect(args))
+end
+
+struct Fun <: Syn
+  body::Vector{Syn}
+end
+
+struct Lit <: Syn
   v::Union{Int64,Float64,Symbol,String}
 end
 
-struct Name <: Syntax
+struct Ve <: Syn
+  v::Symbol
+  Ve(v::String) = new(Symbol(v))
+  Ve(v::Char) = new(Symbol(v))
+end
+
+struct Adv <: Syn
+  v::Symbol
+  arg::Syn
+  Adv(v::String, arg) = new(Symbol(v), arg)
+end
+
+struct Name <: Syn
   v::Symbol
   Name(v::Symbol) = new(v)
   Name(v::String) = new(Symbol(v))
 end
 
-struct Prim <: Syntax
-  v::Symbol
-  Prim(v::Symbol) = new(v)
-  Prim(v::String) = new(Symbol(v))
+struct Omit <: Syn
 end
-
-struct Omit <: Syntax
-end
-
-isnoun(syn::Syntax) = !isverb(syn)
-isverb(syn::Syntax) =
-  syn isa Node && (syn.type === :verb || syn.type === :adverb)
 
 import AbstractTrees
 
-AbstractTrees.nodetype(node::Parse.Node) = node.type
-AbstractTrees.children(node::Parse.Node) = node.body
+AbstractTrees.nodetype(s::Syn) = nameof(typeof(s))
+AbstractTrees.children(s::Syn) = []
+AbstractTrees.children(s::Union{Seq,Fun}) = s.body
+AbstractTrees.children(s::App) = [s.head, s.args...]
+AbstractTrees.children(s::Adv) = [s.arg]
 
-function Base.show(io::IO, node::Parse.Node)
+print_compact(io::IO, s::Syn) =
+  print(io, nameof(typeof(s)))
+print_compact(io::IO, s::Union{Lit,Name,Ve,Adv}) =
+  print(io, "$(nameof(typeof(s)))($(repr("text/plain", s.v)))")
+
+function Base.show(io::IO, s::Syn)
   compact = get(io, :compact, false)
-  if compact; print(io, "Node($(node.type))")
-  else; AbstractTrees.print_tree(io, node)
+  if compact; print_compact(io, s)
+  else; AbstractTrees.print_tree(io, s)
   end
 end
+end
+
+module Parse
+import ..Tokenize: Token
+using ..Syntax
+export parse
 
 mutable struct ParseContext
   tokens::Vector{Token}
@@ -175,18 +216,34 @@ consume!(ctx::ParseContext) =
     tok
   end
 
-import ..Tokenize, ..int_null, ..float_null, ..symbol_null, ..char_null
+import ..Tokenize, ..Null
+
+verbs = collect(raw"+-*%!&|<>=~,^#_$?@.")
+
+monadics, dyadics =
+  Ve.(map(v -> v * ":", verbs)), Ve.(verbs) 
+dyadics2monadics = Dict(zip(dyadics, monadics))
+for v in ["::", ":"]
+  dyadics2monadics[Ve(v)] = Ve(v)
+end
+
+monadics_av = Set(Ve.(['\'']))
+
+to_monadic(v::Symbol) = to_monadic(Ve(v))
+to_monadic(v) = v
+to_monadic(v::Ve) = get(dyadics2monadics, v, v)
+to_monadic(v::Adv) = v.v in monadics_av ? Adv(v.v, to_monadic(v.arg)) : v
 
 function parse(data::String)
   tokens = Tokenize.tokenize(data)
   ctx = ParseContext(tokens, 1)
-  node = Node(:seq, exprs(ctx))
+  node = Seq(exprs(ctx))
   @assert peek(ctx) === :eof "expected EOF but got $(peek(ctx))"
   node
 end
 
 function exprs(ctx::ParseContext; parse_omit::Bool=false)
-  es = Syntax[]
+  es = Syn[]
   seen_semi = true
   while true
     e = expr(ctx)
@@ -211,30 +268,28 @@ function exprs(ctx::ParseContext; parse_omit::Bool=false)
   es
 end
 
-function expr(ctx::ParseContext)
+function expr(ctx::ParseContext; after_noun=false)
   t = term(ctx)
   if t === nothing
     nothing
-  elseif isverb(t)
+  elseif t isa Union{Ve,Adv}
     a = expr(ctx)
     if a !== nothing
-      Node(:app, [t, Lit(1), a])
+      App(after_noun ? t : to_monadic(t), a)
     else
       t
     end
-  elseif isnoun(t)
-    ve = expr(ctx)
+  elseif !(t isa Union{Ve,Adv})
+    ve = expr(ctx, after_noun=true)
     if ve !== nothing
-      if ve isa Node &&
-         ve.type === :app &&
-         length(ve.body) == 3 &&
-         isverb(ve.body[1])
-        v, _, x = ve.body
-        Node(:app, [v, Lit(2), t, x])
-      elseif isverb(ve)
-        Node(:app, [ve, Lit(2), t])
+      if ve isa App &&
+         length(ve.args) == 1 &&
+         ve.head isa Union{Ve,Adv}
+        App(ve.head, t, ve.args[1]) # infix
+      elseif ve isa Union{Ve,Adv}
+        App(ve, t) # ???
       else
-        Node(:app, [t, Lit(1), ve])
+        App(to_monadic(t), ve)
       end
     else
       t
@@ -251,7 +306,7 @@ function number0(ctx::ParseContext)
   value =
     if tok === :int
       if value=="0N"
-        int_null
+        Null.null(Int64)
       else
         Base.parse(Int64, value)
       end
@@ -261,7 +316,7 @@ function number0(ctx::ParseContext)
       elseif value=="-0w"
         -Inf
       elseif value=="0n"
-        float_null
+        Null.null(Float64)
       else
         Base.parse(Float64, value)
       end
@@ -275,7 +330,7 @@ function number(ctx::ParseContext)
   syn = number0(ctx)
   next = peek(ctx)
   if next === :int || next === :float
-    syn = Node(:seq, [syn])
+    syn = Seq([syn])
     while true
       push!(syn.body, number0(ctx))
       next = peek(ctx)
@@ -294,7 +349,7 @@ function symbol(ctx::ParseContext)
   syn = symbol0(ctx)
   next = peek(ctx)
   if next === :symbol
-    syn = Node(:seq, [syn])
+    syn = Seq([syn])
     while true
       push!(syn.body, symbol0(ctx))
       next = peek(ctx)
@@ -309,42 +364,38 @@ function term(ctx::ParseContext)
   t = 
     if next === :verb
       _, value = consume!(ctx)
-      adverb(Node(:verb, [Prim(value)]), ctx)
+      Ve(value)
     elseif next === :name
       _, value = consume!(ctx)
-      adverb(Name(value), ctx)
+      Name(value)
     elseif next === :int || next === :float
-      syn = number(ctx)
-      adverb(syn, ctx)
+      number(ctx)
     elseif next === :symbol
-      syn = symbol(ctx)
-      adverb(syn, ctx)
+      symbol(ctx)
     elseif next === :bitmask
       _, value = consume!(ctx)
       value = Lit.(Base.parse.(Int64, collect(value[1:end-1])))
-      syn = length(value) == 1 ? value[1] : Node(:seq, value)
-      adverb(syn, ctx)
+      length(value) == 1 ? value[1] : Seq(value)
     elseif next === :str
       _, value = consume!(ctx)
-      adverb(Lit(value), ctx)
+      Lit(value)
     elseif next === :lbrace
       consume!(ctx)
       es = exprs(ctx)
       @assert peek(ctx) === :rbrace
       consume!(ctx)
-      adverb(Node(:fun, es), ctx)
+      Fun(es)
     elseif next === :lparen
       consume!(ctx)
       es = exprs(ctx)
       @assert peek(ctx) === :rparen
       consume!(ctx)
-      syn = length(es) == 1 ? es[1] : Node(:seq, es)
-      adverb(syn, ctx)
+      length(es) == 1 ? es[1] : Seq(es)
     else
       nothing
     end
   if t !== nothing
-    adverb(app(t, ctx), ctx)
+    adverb(app(adverb(t, ctx), ctx), ctx)
   else
     t
   end
@@ -356,24 +407,24 @@ function app(t, ctx::ParseContext)
     es = exprs(ctx, parse_omit=true)
     @assert peek(ctx) === :rbracket
     consume!(ctx)
-    t = Node(:app, [t, Lit(max(1, length(es))), es...])
+    arity = max(1, length(es))
+    t = App(arity==1 ? to_monadic(t) : t, es...)
   end
   t
 end
 
-function adverb(verb, ctx::ParseContext)
+function adverb(v, ctx::ParseContext)
   while peek(ctx) === :adverb
-    _, value = consume!(ctx)
-    verb = Node(:adverb, [Prim(value), verb])
+    _, val = consume!(ctx)
+    v = Adv(val, v)
   end
-  verb
+  v
 end
 
 end
 
 module Runtime
-
-import ..int_null, ..float_null, ..any_null
+import ..Null
 
 # K-specific function types
 
@@ -495,16 +546,6 @@ isequal(x::OrderedDict{K,V}, y::OrderedDict{K,V}) where {K,V} =
     return true
   end
 
-import ..float_null, ..int_null, ..symbol_null, ..char_null, ..any_null
-
-null(::Type{Float64}) = float_null
-null(::Type{Int64}) = int_null
-null(::Type{Symbol}) = symbol_null
-null(::Type{Char}) = char_null
-# See https://chat.stackexchange.com/transcript/message/58631508#58631508 for a
-# reasoning to return "" (an empty string).
-null(::Type{Any}) = any_null
-
 # rank
 
 non_urank = typemax(Int64)
@@ -538,20 +579,20 @@ urank(x::Vector) =
     end
   end
 
-outdex′(x) = null(typeof(x))
+outdex′(x) = Null.null(typeof(x))
 outdex′(x::Vector) =
-  isempty(x) ? any_null : fill(outdex(x), length(x))
+  isempty(x) ? Null.any_null : fill(outdex(x), length(x))
 
 outdex(x) = outdex′(x)
 outdex(x::Vector{T}) where T <: KAtom =
-  null(eltype(x))
+  Null.null(eltype(x))
 outdex(x::Vector) =
-  isempty(x) ? any_null : begin
+  isempty(x) ? Null.any_null : begin
     @inbounds v = x[1]
     fill(outdex(v), length(v))
   end
 outdex(x::AbstractDict) =
-  isempty(x) ? any_null : outdex′(first(x).second)
+  isempty(x) ? Null.any_null : outdex′(first(x).second)
 
 # application
 
@@ -908,8 +949,8 @@ ksub(x, y) = x - y
 
 # * x
 kfirst(x) = x
-kfirst(x::Vector) = isempty(x) ? null(eltype(x)) : (@inbounds x[1])
-kfirst(x::AbstractDict) = isempty(x) ? null(eltype(x)) : first(x).second
+kfirst(x::Vector) = isempty(x) ? Null.null(eltype(x)) : (@inbounds x[1])
+kfirst(x::AbstractDict) = isempty(x) ? Null.null(eltype(x)) : first(x).second
 
 # x * y
 kmul(x, y) = x * y
@@ -1002,7 +1043,7 @@ kor(x, y) = max(x, y)
 knot(x::Float64) = Int(x == 0.0)
 knot(x::Int64) = Int(x == 0.0)
 knot(x::Char) = Int(x == '\0')
-knot(x::Symbol) = Int(x == symbol_null)
+knot(x::Symbol) = Int(x == Null.symbol_null)
 knot(x::KFunction) = Int(x == kself)
 knot(x::Vector) = knot.(x)
 @monad4dict(knot)
@@ -1049,21 +1090,13 @@ kconcat(x::Vector, y::Vector) = vcat(x, y)
 kconcat(x::AbstractDict, y::AbstractDict) = merge(x, y)
 
 # ^x null
-knull(x::Int64) = x == int_null
-knull(x::Float64) = x === float_null
-knull(x::Symbol) = x === symbol_null
-knull(x::Char) = x === char_null
+knull(x) = 0
+knull(x::KAtom) = Int(Null.isnull(x))
 knull(x::Vector) = knull.(x)
 @monad4dict(knull)
 
 # a^y fill
-kfill(x::KAtom, y) =
-  y == int_null ||
-  y === float_null ||
-  y == symbol_null ||
-  y == char_null ||
-  y == any_null ?
-  x : y
+kfill(x::KAtom, y) = Null.isnull(y) ? x : y
 kfill(x::KAtom, y::Vector) = kfill.(x, y)
 kfill(x::KAtom, y::AbstractDict) =
   OrderedDict(zip(keys(y), kfill.(x, values(y))))
@@ -1217,62 +1250,57 @@ kappn(x, y::AbstractDict) = @assert false "type"
 end
 
 module Compile
-import ..Parse: Syntax, Node, Lit, Name, Omit, Prim, parse, isverb
+using ..Syntax,..Parse
 import ..Runtime
 
 verbs = Dict(
-             (      :(::),  1) => Runtime.kself,
-             (       :(:),  2) => Runtime.kright,
-             (         :+,  1) => Runtime.kflip,
-             (         :+,  2) => Runtime.kadd,
-             (         :-,  1) => Runtime.kneg,
-             (         :-,  2) => Runtime.ksub,
-             (         :*,  1) => Runtime.kfirst,
-             (         :*,  2) => Runtime.kmul,
-             (         :%,  1) => Runtime.ksqrt,
-             (         :%,  2) => Runtime.kdiv,
-             (       :(!),  1) => Runtime.kenum,
-             (       :(!),  2) => Runtime.kmod,
-             (       :(&),  1) => Runtime.kwhere,
-             (       :(&),  2) => Runtime.kand,
-             (       :(|),  1) => Runtime.krev,
-             (       :(|),  2) => Runtime.kor,
-             (       :(~),  1) => Runtime.knot,
-             (       :(~),  2) => Runtime.kmatch,
-             (       :(=),  1) => Runtime.kgroup,
-             (       :(=),  2) => Runtime.keq,
-             ( Symbol(','), 1) => Runtime.kenlist,
-             ( Symbol(','), 2) => Runtime.kconcat,
-             (          :^, 1) => Runtime.knull,
-             (          :^, 2) => Runtime.kfill,
-             ( Symbol('#'), 1) => Runtime.klen,
-             ( Symbol('#'), 2) => Runtime.kreshape,
-             (       :(_),  1) => Runtime.kfloor,
-             (       :(_),  2) => Runtime.kdrop,
-             (       :($),  1) => Runtime.kstring,
-             ( Symbol('?'), 1) => Runtime.kuniq,
-             ( Symbol('@'), 2) => Runtime.app,
-             ( Symbol('.'), 1) => Runtime.kget,
-             ( Symbol('.'), 2) => Runtime.kappn,
+             Symbol(raw"::") => Runtime.kself,
+             Symbol(raw":")  => Runtime.kright,
+             Symbol(raw"+:") => Runtime.kflip,
+             Symbol(raw"+")  => Runtime.kadd,
+             Symbol(raw"-:") => Runtime.kneg,
+             Symbol(raw"-")  => Runtime.ksub,
+             Symbol(raw"*:") => Runtime.kfirst,
+             Symbol(raw"*")  => Runtime.kmul,
+             Symbol(raw"%:") => Runtime.ksqrt,
+             Symbol(raw"%")  => Runtime.kdiv,
+             Symbol(raw"!:") => Runtime.kenum,
+             Symbol(raw"!")  => Runtime.kmod,
+             Symbol(raw"&:") => Runtime.kwhere,
+             Symbol(raw"&")  => Runtime.kand,
+             Symbol(raw"|:") => Runtime.krev,
+             Symbol(raw"|")  => Runtime.kor,
+             Symbol(raw"~:") => Runtime.knot,
+             Symbol(raw"~")  => Runtime.kmatch,
+             Symbol(raw"=:") => Runtime.kgroup,
+             Symbol(raw"=")  => Runtime.keq,
+             Symbol(raw",:") => Runtime.kenlist,
+             Symbol(raw",")  => Runtime.kconcat,
+             Symbol(raw"^:") => Runtime.knull,
+             Symbol(raw"^")  => Runtime.kfill,
+             Symbol(raw"#:") => Runtime.klen,
+             Symbol(raw"#")  => Runtime.kreshape,
+             Symbol(raw"_:") => Runtime.kfloor,
+             Symbol(raw"_")  => Runtime.kdrop,
+             Symbol(raw"$:") => Runtime.kstring,
+             Symbol(raw"?:") => Runtime.kuniq,
+             Symbol(raw"@")  => Runtime.app,
+             Symbol(raw".:") => Runtime.kget,
+             Symbol(raw".")  => Runtime.kappn,
             )
 
 adverbs = Dict(
-               :(/)        => (Runtime.kfold, 2),
-               :(\)        => (Runtime.kscan, 2),
-               Symbol("'") => (Runtime.keach, 1),
+               Symbol(raw"/")  => Runtime.kfold,
+               Symbol(raw"\\") => Runtime.kscan,
+               Symbol(raw"'")  => Runtime.keach,
               )
 
-compile(syn::Node) =
-  quote $(map(compile1, syn.body)...) end
-compile(str::String) =
-  compile(parse(str))
+compile(str::String) = compile(parse(str))
+compile(syn::Seq) = quote $(map(compile1, syn.body)...) end
 
-compile1(syn::Node) =
-  if syn.type === :seq
-    es = map(compile1, syn.body)
-    :([$(es...)])
-  elseif syn.type === :app
-    f, arity, args... = syn.body
+compile1(syn::App) =
+  begin
+    f, args = syn.head, syn.args
     args, pargs =
       begin
         args′, pargs = [], []
@@ -1288,34 +1316,32 @@ compile1(syn::Node) =
         args′, pargs
       end
     if isempty(args); args = [Runtime.kself] end
-    if f isa Node && f.type===:verb &&
-        f.body[1] isa Prim && f.body[1].v===:(:) &&
-        arity.v==2 && args[1] isa Symbol
+    if f isa Ve && f.v === :(:) &&
+        length(args)==2 && args[1] isa Symbol
       # assignment `n:x`
       @assert isempty(pargs) "cannot project n:x"
       name,rhs=args[1],args[2]
       :($name = $rhs)
-    elseif f isa Node && f.type===:verb &&
-        f.body[1] isa Prim && f.body[1].v===:(:) &&
-        arity.v==1
+    elseif f isa Ve && f.v===:(:) &&
+        length(args)==1
       # return `:x`
       @assert isempty(pargs) "cannot project :x"
       rhs=args[1]
       :(return $rhs)
-    elseif isverb(f)
-      @assert arity.v == 1 || arity.v === 2
-      f = compilefun(f, arity.v)
+    elseif f isa Union{Ve,Adv}
+      @assert length(args) in (1, 2)
+      f = compilefun(f)
       compileapp(f, args, pargs)
-    elseif f isa Node && f.type===:fun
-      @assert arity.v === length(args)
+    elseif f isa Fun
       f = compile1(f)
       compileapp(f, args, pargs)
     else # generic case
-      @assert arity.v === length(args)
       f = compile1(f)
       compileapp(f, args, pargs)
     end
-  elseif syn.type === :fun
+  end
+compile1(syn::Fun) =
+  begin
     x,y,z=implicitargs(syn.body)
     body = map(compile1, syn.body)
     if z
@@ -1327,13 +1353,7 @@ compile1(syn::Node) =
     else
       :((_) -> $(body...))
     end
-  elseif isverb(syn)
-    :($(compilefun(syn, 2)))
   end
-
-compile1(syn::Name) =
-  :($(syn.v))
-
 compile1(syn::Lit) =
   if syn.v isa String
     v = length(syn.v) == 1 ? syn.v[1] : collect(syn.v)
@@ -1343,9 +1363,9 @@ compile1(syn::Lit) =
   else
     syn.v
   end
-
-compile1(syn::Prim) =
-  :($(compilefun(syn, 2)))
+compile1(syn::Name) = :($(syn.v))
+compile1(syn::Seq) = :([$(map(compile1, syn.body)...)])
+compile1(syn::Union{Ve,Adv}) = :($(compilefun(syn)))
 
 compileapp(f, args, pargs) =
   if isempty(pargs); compileapp(f, args)
@@ -1387,47 +1407,31 @@ compileapp(f::Runtime.KFunction, args) =
     end
   end
 
-compilefun(syn::Lit, prefer_arity::Int64) = compile1(syn)
-
-compilefun(syn::Prim, prefer_arity::Int64) =
+compilefun(syn) = compile1(syn)
+compilefun(syn::Ve) =
   begin
-    f =
-      if prefer_arity == 2
-        f = get(verbs, (syn.v, 2), nothing)
-        if f === nothing
-          f = get(verbs, (syn.v, 1), nothing)
-        end
-        f
-      elseif prefer_arity == 1
-        f = get(verbs, (syn.v, 1), nothing)
-      else; @assert false end
-    @assert f !== nothing "primitive is not implemented: $(syn.v) ($prefer_arity arity)"
+    f = get(verbs, syn.v, nothing)
+    @assert f !== nothing "primitive is not implemented: $(syn.v)"
     f
   end
-compilefun(syn::Node, prefer_arity::Int64) =
-  if syn.type===:verb
-    compilefun(syn.body[1], prefer_arity)
-  elseif syn.type === :adverb
-    adverb, verb_arity = get(adverbs, syn.body[1].v, (nothing, nothing))
-    @assert adverb !== nothing "adverb is not implemented: $(syn.body[1].v)"
-    verb = compilefun(syn.body[2], max(prefer_arity, verb_arity))
+compilefun(syn::Adv) =
+  begin
+    adverb = get(adverbs, syn.v, (nothing, nothing))
+    @assert adverb !== nothing "adverb is not implemented: $(syn.v)"
+    verb = compilefun(syn.arg)
     if verb isa Expr
       :($adverb($verb))
     else
       adverb(verb)
     end
-  else
-    compile1(syn)
   end
 
-implicitargs(syn::Name) =
-  syn.v===:x,syn.v===:y,syn.v===:z
-implicitargs(syn::Union{Omit,Lit,Prim}) = false,false,false
-implicitargs(syn::Node) =
-  if syn.type === :fun; false,false,false
-  else; implicitargs(syn.body)
-  end
-implicitargs(syns::Vector{Syntax}) =
+implicitargs(syn::Name) = syn.v===:x,syn.v===:y,syn.v===:z
+implicitargs(syn::Union{Omit,Lit,Ve,Fun,Adv}) = false,false,false
+implicitargs(syn::App) = implicitargs([syn.head, syn.args...])
+implicitargs(syn::Fun) = false,false,false
+implicitargs(syn::Seq) = implicitargs(syn.body)
+implicitargs(syns::Vector{Syn}) =
   begin
     x,y,z=false,false,false
     for syn in syns
