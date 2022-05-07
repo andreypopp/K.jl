@@ -50,7 +50,7 @@ Negative bitmasks are not supported and instead this parses as application of
     Seq
     └─ App
        ├─ Lit(-101)
-       └─ Name(:b)
+       └─ Id(:b)
 
 Floats:
 
@@ -94,7 +94,7 @@ Floats:
     Seq
     └─ App
        ├─ Lit(0)
-       └─ Name(:n)
+       └─ Id(:n)
 
 Stranding:
 
@@ -137,20 +137,20 @@ Infix `-`:
     julia> K.parse("1- 2")
     Seq
     └─ App
-       ├─ Ve(:-)
+       ├─ Verb(:-)
        ├─ Lit(1)
        └─ Lit(2)
 
     julia> K.parse("1 - 2")
     Seq
     └─ App
-       ├─ Ve(:-)
+       ├─ Verb(:-)
        ├─ Lit(1)
        └─ Lit(2)
 
     julia> K.parse("1-2")
     Seq
     └─ App
-       ├─ Ve(:-)
+       ├─ Verb(:-)
        ├─ Lit(1)
        └─ Lit(2)
