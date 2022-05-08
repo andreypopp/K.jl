@@ -497,7 +497,18 @@ identity(f) =
   elseif f === kdiv; 1
   elseif f === kand; 0
   elseif f === kor; 0
-  else; Char[]
+  elseif f === kconcat; Any[]
+  else; nothing
+  end
+identity(f, T::Type) =
+  if f === kadd; zero(T)
+  elseif f === ksub; zero(T)
+  elseif f === kmul; one(T)
+  elseif f === kdiv; one(T)
+  elseif f === kand; zero(T)
+  elseif f === kor; zero(T)
+  elseif f === kconcat; T <: Vector ? eltype(T)[] : T[]
+  else; nothing
   end
 
 isequal(x, y) = false
@@ -759,6 +770,7 @@ arity(::Train)::Arity = (1, 2)
 macro adverb(name, arr)
   quote
     struct $(esc(name)) <: AFunction; f::Any end
+    # TODO: this is incorrect, each adverb should define its own promotion...
     Base.promote_op(f::$(esc(name)), S::Type...) = Base.promote_op(f.f, S...)
     $(esc(:arity))(::$(esc(name)))::Arity = $arr
   end
@@ -804,7 +816,10 @@ arity(::Join)::Arity = (1, 1)
   end
 
 # F/ fold
-(o::FoldD)(x) = isempty(x) ? identity(o.f) : foldl(o.f, x)
+(o::FoldD)(x) =
+  isempty(x) ?
+    identity(o.f, eltype(typeof(x))) :
+    foldl(o.f, x)
 # x F/ seeded /  10+/1 2 3 -> 16
 (o::FoldD)(x, y) = foldl(o.f, y, init=x)
 (o::FoldD)(x::AbstractDict) = o(values(x))
@@ -842,7 +857,25 @@ arity(::Split)::Arity = (1, 1)
 # TODO: I\ encode
 
 #   F\ scan      +\1 2 3 -> 1 3 6
-(o::ScanD)(x) = isempty(x) ? x : accumulate(o.f, x)
+(o::ScanD)(x::Vector) =
+  begin
+    isempty(x) ? x : begin
+      ET, len = eltype(x), length(x)
+      id = identity(o.f, eltype(x))
+      if id === nothing
+        T = promote_type(Base.promote_op(o.f, ET, ET), ET)
+        r = Vector{T}(undef, len)
+        r[1] = x[1]
+        accumulate!(o.f, r, x)
+      else
+        T = Base.promote_op(o.f, ET, ET)
+        r = Vector{T}(undef, len)
+        accumulate!(o.f, r, x; init=id)
+      end
+    end
+  end
+# TODO: is this correct?
+(o::ScanD)(x) = x
 # x F\ seeded \  10+\1 2 3 -> 11 13 16
 (o::ScanD)(x, y) = isempty(y) ? y : accumulate(o.f, y, init=x)
 # i f\ n-dos     5(2*)\1 -> 1 2 4 8 16 32
@@ -924,8 +957,14 @@ kscan(s::Char) = Split(Char[s])
 
 keach(f::KFunction) = arity(f)[1] == 2 ? EachD(f) : EachM(f)
 
-keach′(f, x) = map(f, x)
-keach′(f, d::AbstractDict) = OrderedDict(zip(keys(d), map(f, values(d))))
+keach′(f, x) = f(x)
+keach′(f, x::Vector) =
+  isempty(x) ? begin
+     T = Base.promote_op(f, eltype(typeof(x)))
+     T[]
+  end : f.(x)
+keach′(f, d::AbstractDict) =
+  OrderedDict(zip(keys(d), map(f, values(d))))
 
 # verbs
 
