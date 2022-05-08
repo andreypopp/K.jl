@@ -185,10 +185,10 @@ verbs = collect(raw"+-*%!&|<>=~,^#_$?@.")
 
 monadics, dyadics =
   Verb.(map(v -> v * ":", verbs)), Verb.(verbs) 
+right = Verb(":")
+self = Verb("::")
 dyadics2monadics = Dict(zip(dyadics, monadics))
-for v in ["::", ":"]
-  dyadics2monadics[Verb(v)] = Verb(v)
-end
+for v in [right, self]; dyadics2monadics[v] = v end
 
 monadics_av = Set(Verb.(['\'']))
 
@@ -210,7 +210,7 @@ print_compact(io::IO, s::Union{Lit,Id,Verb,Adverb}) =
 function Base.show(io::IO, s::Syn)
   compact = get(io, :compact, false)
   if compact; print_compact(io, s)
-  else; AbstractTrees.print_tree(io, s)
+  else; AbstractTrees.print_tree(io, s; maxdepth=6)
   end
 end
 end
@@ -237,12 +237,14 @@ skip!(ctx::ParseContext) =
   ctx.pos += 1
 consume!(ctx::ParseContext) =
   begin
-    @assert ctx.pos <= length(ctx.tokens)
-    tok = ctx.tokens[ctx.pos]
-    ctx.pos += 1
-    tok
+    @assert ctx.pos <= length(ctx.tokens);
+    tok = ctx.tokens[ctx.pos]; ctx.pos += 1; tok
   end
+consume!(ctx::ParseContext, tok::Symbol) =
+  (@assert peek(ctx) == tok "expected $tok got $(peek(ctx))"; consume!(ctx))
 
+# grammar:  E:E;e|e e:nve|te| t:n|v v:tA|V n:t[E]|(E)|{E}|N
+#                   f:vv|nv|nf|vf
 function parse(data::String)
   tokens = tokenize(data)
   ctx = ParseContext(tokens, 1)
@@ -277,50 +279,91 @@ function exprs(ctx::ParseContext; parse_omit::Bool=false)
   es
 end
 
-function expr(ctx::ParseContext; after_noun=false)
-  kind, t = term(ctx)
-  if t === nothing
-    nothing
-  elseif kind == :verb
-    a = expr(ctx)
-    if a !== nothing
-      if after_noun
-        App(t, a)
-      else
-        if a isa Union{Verb,Adverb,Train,LBind}
-          Train(as_monadic(t), a)
-        else
-          App(as_monadic(t), a)
-        end
-      end
-    else
-      t
-    end
-  elseif kind == :noun
-    ve = expr(ctx, after_noun=true)
-    if ve !== nothing
-      if ve isa Union{Train,LBind}
-        Train(t, ve)
-      elseif ve isa App &&
-         length(ve.args) == 1 &&
-         ve.head isa Union{Verb,Adverb}
-        v, t2 = ve.head, ve.args[1]
-        if t2 isa Union{Verb,Adverb,Train,LBind}
-          Train(LBind(v, t), t2) # train: (n v) v′
-        else
-          App(v, t, t2) # infix: n v n′
-        end
-      elseif ve isa Adverb || ve isa Verb && ve in Syntax.dyadics
-        LBind(ve, t) # left bind: n v
-      else
-        App(as_monadic(t), ve) # juxtaposition: n n′
-      end
-    else
-      t
-    end
-  else
-    @assert false
+struct N; syn::Syn end
+struct V; syn::Syn end
+
+function expr(ctx::ParseContext)::Union{Syn,Nothing}
+  ts = Union{N,V}[]
+  while true
+    t = term(ctx)
+    t !== nothing ? push!(ts, t) : break
   end
+  isempty(ts) && return
+  e = pop!(ts)
+  while !isempty(ts)
+    if length(ts) > 1 && ts[end] isa V && ts[end-1] isa N
+      v, n = pop!(ts), pop!(ts)
+      e = e isa N || v.syn == Syntax.right ?
+        N(App(v.syn, n.syn, e.syn)) : # nvn
+        V(Train(LBind(v.syn, n.syn), e.syn)) # nvv
+    elseif ts[end] isa V
+      v = pop!(ts)
+      e = e isa V && v.syn != Syntax.right ?
+        V(Train(as_monadic(v.syn), e.syn)) : # vv
+        N(App(as_monadic(v.syn), e.syn)) # vn
+    elseif ts[end] isa N
+      n = pop!(ts)
+      e = e isa V ?
+        V(e.syn isa Union{Adverb,Verb} ? # nv
+          LBind(e.syn, n.syn) : 
+          Train(n.syn, e.syn)) :
+        N(App(as_monadic(n.syn), e.syn)) # nn
+    end
+  end
+  e.syn
+end
+
+function term(ctx::ParseContext)::Union{N,V,Nothing}
+  next = peek(ctx)
+  t = 
+    if next === :verb
+      _, value = consume!(ctx)
+      V(Verb(value))
+    elseif next === :name
+      _, value = consume!(ctx)
+      N(Id(value))
+    elseif next === :int || next === :float
+      N(number(ctx))
+    elseif next === :symbol
+      N(symbol(ctx))
+    elseif next === :bitmask
+      _, value = consume!(ctx)
+      value = Lit.(Base.parse.(Int64, collect(value[1:end-1])))
+      N((length(value) == 1 ? value[1] : Seq(value)))
+    elseif next === :str
+      _, value = consume!(ctx)
+      N(Lit(value))
+    elseif next === :lbrace
+      consume!(ctx)
+      es = exprs(ctx)
+      consume!(ctx, :rbrace)
+      N(Fun(es))
+    elseif next === :lparen
+      consume!(ctx)
+      es = exprs(ctx)
+      consume!(ctx, :rparen)
+      N((length(es) == 1 ? es[1] : Seq(es)))
+    else
+      nothing
+    end
+  if t !== nothing
+    while true
+      next = peek(ctx)
+      if next === :lbracket
+        consume!(ctx)
+        es = exprs(ctx, parse_omit=true)
+        consume!(ctx, :rbracket)
+        arity = max(1, length(es))
+        t = N(App(arity==1 ? as_monadic(t.syn) : t.syn, es...))
+      elseif next === :adverb
+        _, val = consume!(ctx)
+        t = V(Adverb(val, t.syn))
+      else
+        break
+      end
+    end
+  end
+  t
 end
 
 function number0(ctx::ParseContext)
@@ -379,67 +422,6 @@ function symbol(ctx::ParseContext)
     end
   end
   syn
-end
-
-function term(ctx::ParseContext)
-  next = peek(ctx)
-  kind, t = 
-    if next === :verb
-      _, value = consume!(ctx)
-      :verb, Verb(value)
-    elseif next === :name
-      _, value = consume!(ctx)
-      :noun, Id(value)
-    elseif next === :int || next === :float
-      :noun, number(ctx)
-    elseif next === :symbol
-      :noun, symbol(ctx)
-    elseif next === :bitmask
-      _, value = consume!(ctx)
-      value = Lit.(Base.parse.(Int64, collect(value[1:end-1])))
-      :noun, (length(value) == 1 ? value[1] : Seq(value))
-    elseif next === :str
-      _, value = consume!(ctx)
-      :noun, Lit(value)
-    elseif next === :lbrace
-      consume!(ctx)
-      es = exprs(ctx)
-      @assert peek(ctx) === :rbrace
-      consume!(ctx)
-      :noun, Fun(es)
-    elseif next === :lparen
-      consume!(ctx)
-      es = exprs(ctx)
-      @assert peek(ctx) === :rparen
-      consume!(ctx)
-      :noun, (length(es) == 1 ? es[1] : Seq(es))
-    else
-      nothing, nothing
-    end
-  if t !== nothing
-    kind, t = adverb(app(adverb((kind, t), ctx), ctx), ctx)
-  end
-  kind, t
-end
-
-function app((kind, t), ctx::ParseContext)
-  while peek(ctx) === :lbracket
-    consume!(ctx)
-    es = exprs(ctx, parse_omit=true)
-    @assert peek(ctx) === :rbracket
-    consume!(ctx)
-    arity = max(1, length(es))
-    kind, t = :noun, App(arity==1 ? as_monadic(t) : t, es...)
-  end
-  kind, t
-end
-
-function adverb((kind, t), ctx::ParseContext)
-  while peek(ctx) === :adverb
-    _, val = consume!(ctx)
-    kind, t = :verb, Adverb(val, t)
-  end
-  kind, t
 end
 
 as_monadic(v) = v
