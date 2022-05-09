@@ -182,12 +182,10 @@ In fact K doesn't allow users to define their own dyadic functions
 It is an error to supply extra arguments to a function:
 
     julia> k"{x+1}[1;2]"
-    ERROR: LoadError: AssertionError: arity error
-    ⋮
+    ERROR: AssertionError: arity error
 
     julia> k"{x+y+1}[1;2;3]"
-    ERROR: LoadError: AssertionError: arity error
-    ⋮
+    ERROR: AssertionError: arity error
 
 But it is possible to supply less arguments than the function's arity, in this
 case a new partially applied function is returned:

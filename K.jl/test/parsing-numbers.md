@@ -92,9 +92,7 @@ Floats:
 
     julia> K.parse("-0n")
     Seq
-    └─ App
-       ├─ Lit(0)
-       └─ Id(:n)
+    └─ Lit(NaN)
 
 Stranding:
 

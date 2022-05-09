@@ -97,5 +97,4 @@ In case a key is missing, null value will be returned for this key:
     NaN
 
     julia> k"points[1]"
-    ERROR: LoadError: AssertionError: rank error
-    ⋮
+    ERROR: AssertionError: rank error

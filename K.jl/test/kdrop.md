@@ -70,12 +70,10 @@
      []
     
     julia> k"2 4 4_\"\""
-    ERROR: LoadError: AssertionError: domain error
-    ⋮
+    ERROR: AssertionError: domain error
     
     julia> k"2 4 4_\"aa\""
-    ERROR: LoadError: AssertionError: domain error
-    ⋮
+    ERROR: AssertionError: domain error
 
 `f_Y` filters out elements from `Y` which match mask computed by `f`:
 
@@ -85,12 +83,10 @@
      3
 
     julia> k"{1 0 1 1 1}_1 2 3 4"
-    ERROR: LoadError: BoundsError:…
-    ⋮
+    ERROR: BoundsError:…
 
     julia> k"{1 0 1}_1 2 3 4"
-    ERROR: LoadError: BoundsError:…
-    ⋮
+    ERROR: BoundsError:…
 
 `X_i` deletes elements from `X` at index `i`:
 

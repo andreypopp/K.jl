@@ -26,8 +26,7 @@ arguments at once:
 It is an error to call a projection with more arguments than required:
 
     julia> k"{x+y}[1][2;3]"
-    ERROR: LoadError: AssertionError: arity error
-    ⋮
+    ERROR: AssertionError: arity error
 
 For functions with arity >2 we can project by passing several arguments at once:
 
@@ -126,5 +125,4 @@ will result in an error though:
     … (generic function with 1 method)
 
     julia> k"{x,y,z}[;1;2;3;4][5]"
-    ERROR: LoadError: AssertionError: arity error
-    ⋮
+    ERROR: AssertionError: arity error

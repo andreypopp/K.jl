@@ -24,8 +24,7 @@
      [0, 0, 0, 1]
 
     julia> k"=-10"
-    ERROR: LoadError: ArgumentError: invalid Array dimensions
-    ⋮
+    ERROR: ArgumentError: invalid Array dimensions
 
 `=X` groups elements in `X` producing a dict from with unique values in `X` as
 keys and lists of indicies corresponding to those as values:

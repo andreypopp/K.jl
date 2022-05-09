@@ -33,8 +33,7 @@
      2.0
 
     julia> k"8 4%4 2 3"
-    ERROR: LoadError: AssertionError: length(x) == length(y)
-    ⋮
+    ERROR: AssertionError: length(x) == length(y)
 
 Division by `0` results in `Inf`:
 

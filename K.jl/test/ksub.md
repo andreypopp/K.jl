@@ -28,8 +28,7 @@
      0
     
     julia> k"1 1-1 2 3"
-    ERROR: LoadError: AssertionError: length(x) == length(y)
-    ⋮
+    ERROR: AssertionError: length(x) == length(y)
 
 Chars are converted to ints (and string being lists of chars to lists of ints):
 

@@ -15,13 +15,13 @@ verb1    = colon | re"[\+\-*%!&\|<>=~,^#_$?@\.]"
 verb     = verb1 | (verb1 * colon)
 name     = re"[a-zA-Z]+[a-zA-Z0-9]*"
 backq    = re"`"
-symbol   = backq | (backq * name)
 int      = re"0N" | re"\-?[0-9]+"
 bitmask  = re"[01]+b"
 float0   = re"\-?[0-9]+\.[0-9]*"
 exp      = re"[eE][-+]?[0-9]+"
-float    = re"0n" | re"0w" | re"-0w" | float0 | ((float0 | int) * exp)
+float    = re"-0n" | re"0n" | re"0w" | re"-0w" | float0 | ((float0 | int) * exp)
 str      = re.cat('"', re.rep(re"[^\"]" | re.cat("\\\"")), '"')
+symbol   = backq | (backq * name) | (backq * str)
 lparen   = re"\("
 rparen   = re"\)"
 lbracket = re"\["
@@ -62,10 +62,10 @@ keepneg(tok) =
   tok===:lparen||
   tok===:lbracket||
   tok===:lbrace||
-  tok===:lsemi||
+  tok===:semi||
   tok===:newline
 
-@eval function tokenize(data::String)::Vector{Token}
+@eval function tokenize(data::AbstractString)::Vector{Token}
   $(Automa.generate_init_code(context, tokenizer))
   p_end = p_eof = sizeof(data)
   toks = Token[]
@@ -245,7 +245,7 @@ consume!(ctx::ParseContext, tok::Symbol) =
 
 # grammar:  E:E;e|e e:nve|te| t:n|v v:tA|V n:t[E]|(E)|{E}|N
 #                   f:vv|nv|nf|vf
-function parse(data::String)
+function parse(data::AbstractString)
   tokens = tokenize(data)
   ctx = ParseContext(tokens, 1)
   node = Seq(exprs(ctx))
@@ -382,6 +382,8 @@ function number0(ctx::ParseContext)
         -Inf
       elseif value=="0n"
         Null.null(Float64)
+      elseif value=="-0n"
+        -Null.null(Float64)
       else
         Base.parse(Float64, value)
       end
@@ -407,7 +409,14 @@ end
 
 function symbol0(ctx)
   tok, value = consume!(ctx)
-  Lit(Symbol(value[2:end]))
+  value = value[2:end]
+  if isempty(value)
+    Lit(Symbol(""))
+  elseif value[1] == '"'
+    Lit(Symbol(value[2:end-1]))
+  else
+    Lit(Symbol(value))
+  end
 end
 
 function symbol(ctx::ParseContext)
@@ -514,7 +523,7 @@ identity(f, T::Type) =
 isequal(x, y) = false
 isequal(x::T, y::T) where T = x == y
 isequal(x::Float64, y::Float64) = x === y # 1=0n~0n
-isequal(x::Vector{T}, y::Vector{T}) where T =
+isequal(x::Vector, y::Vector) where T =
   begin
     len = length(x)
     if len != length(y); return false end
@@ -699,8 +708,8 @@ end
 macro dyad4char(f)
   f = esc(f)
   quote
-    $f(x::Char, y) = $f(Int(x), y)
-    $f(x, y::Char) = $f(x, Int(y))
+    $f(x::Char, y::Number) = $f(Int(x), y)
+    $f(x::Number, y::Char) = $f(x, Int(y))
     $f(x::Char, y::Char) = $f(Int(x), Int(y))
   end
 end
@@ -825,7 +834,7 @@ arity(::Join)::Arity = (1, 1)
 (o::FoldD)(x::AbstractDict) = o(values(x))
 
 # C/ join
-(o::Join)(x::Vector{Vector{Char}}) =
+(o::Join)(x::Vector) =
   begin
     r = Char[]
     if isempty(x); return r end
@@ -877,7 +886,10 @@ arity(::Split)::Arity = (1, 1)
 # TODO: is this correct?
 (o::ScanD)(x) = x
 # x F\ seeded \  10+\1 2 3 -> 11 13 16
-(o::ScanD)(x, y) = isempty(y) ? y : accumulate(o.f, y, init=x)
+(o::ScanD)(x, y) = o.f(x, y)
+(o::ScanD)(x, y::Vector) = isempty(y) ? y : accumulate(o.f, y, init=x)
+(o::ScanD)(x, y::AbstractDict) =
+  isempty(y) ? y : OrderedDict(zip(keys(y), o(x, values(y))))
 # i f\ n-dos     5(2*)\1 -> 1 2 4 8 16 32
 (o::ScanM)(x::Int64, y) =
   begin
@@ -1308,6 +1320,17 @@ kappn(x, y) = app(x, y)
 kappn(x, y::Vector) = app(x, y...)
 kappn(x, y::AbstractDict) = @assert false "type"
 
+# @x type
+ktype(x::Int64) = :i
+ktype(x::Float64) = :d
+ktype(x::Symbol) = :s
+ktype(x::Char) = :c
+ktype(x::Vector{Int64}) = :I
+ktype(x::Vector{Float64}) = :D
+ktype(x::Vector{Symbol}) = :S
+ktype(x::Vector{Char}) = :C
+ktype(x::Vector) = :A
+
 end
 
 module Compile
@@ -1348,6 +1371,7 @@ verbs = Dict(
              Symbol(raw"@")  => Runtime.app,
              Symbol(raw".:") => Runtime.kget,
              Symbol(raw".")  => Runtime.kappn,
+             Symbol(raw"@:") => Runtime.ktype,
             )
 
 adverbs = Dict(
@@ -1382,7 +1406,7 @@ compile1(syn::App) =
       # assignment `n:x`
       @assert isempty(pargs) "cannot project n:x"
       name,rhs=args[1],args[2]
-      :($name = $rhs)
+      :(begin $name = $rhs end)
     elseif f isa Verb && f.v===:(:) &&
         length(args)==1
       # return `:x`
@@ -1524,7 +1548,10 @@ k(k::String, mod::Module) =
     mod.eval(jlcode)
   end
 
-macro k_str(code); k(code, __module__) end
+macro k_str(k)
+  code = compile(parse(k))
+  :($(esc(code)))
+end
 
 module Repl
 using ReplMaker, REPL
@@ -1538,11 +1565,7 @@ function init()
     try; parse(s); true
     catch e; false end
   end
-  function run(code::String)
-    jlcode = compile(code)
-    Main.eval(jlcode)
-  end
-  initrepl(run,
+  initrepl(compile,
            prompt_text="  ",
            prompt_color=:blue, 
            # show_function=show_function,
