@@ -13,7 +13,8 @@ colon    = re":"
 adverb   = re"'" | re"/" | re"\\" | re"':" | re"/:" | re"\\:"
 verb1    = colon | re"[\+\-*%!&\|<>=~,^#_$?@\.]"
 verb     = verb1 | (verb1 * colon)
-name     = re"[a-zA-Z]+[a-zA-Z0-9]*"
+id       = re"[a-zA-Z]+[a-zA-Z0-9]*"
+name     = id * re.rep(re.cat('.', id))
 backq    = re"`"
 int      = re"0N" | re"\-?[0-9]+"
 bitmask  = re"[01]+b"
@@ -21,7 +22,7 @@ float0   = re"\-?[0-9]+\.[0-9]*"
 exp      = re"[eE][-+]?[0-9]+"
 float    = re"-0n" | re"0n" | re"0w" | re"-0w" | float0 | ((float0 | int) * exp)
 str      = re.cat('"', re.rep(re"[^\"]" | re.cat("\\\"")), '"')
-symbol   = backq | (backq * name) | (backq * str)
+symbol   = backq | (backq * id) | (backq * str)
 lparen   = re"\("
 rparen   = re"\)"
 lbracket = re"\["
@@ -1347,10 +1348,11 @@ kreshape(x::Vector, y::AbstractDict) =
 
 # _n floor
 kfloor(x::Int64) = x
-kfloor(x::Float64) = floor(Int64, x)
+kfloor(x::Float64) = x === NaN ? Null.int_null : floor(Int64, x)
 
 # _c lowercase
-kfloor(x::Union{Char}) = lowercase(x)
+kfloor(x::Char) = lowercase(x)
+kfloor(x::Symbol) = Symbol(lowercase(string(x)))
 
 kfloor(x::Vector) = kfloor.(x)
 @monad4dict(kfloor)
@@ -1554,7 +1556,9 @@ compile1(syn::App) =
 compile1(syn::Fun) =
   begin
     x,y,z=implicitargs(syn.body)
-    body = map(compile1, syn.body)
+    body = !isempty(syn.body) ?
+      map(compile1, syn.body) :
+      [:($(Runtime.kself))]
     if z
       :((x, y, z) -> $(body...))
     elseif y
