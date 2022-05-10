@@ -13,9 +13,9 @@
      3
 
     julia> k"1+(1.0 2; 3 4)"
-    2-element Vector{Vector{Float64}}:
+    2-element Vector{Vector}:
      [2.0, 3.0]
-     [4.0, 5.0]
+     [4, 5]
     
     julia> k"1 2+1"
     2-element Vector{Int64}:

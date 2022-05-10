@@ -128,12 +128,20 @@ end
 
 module Syntax
 
+export Syn,Seq,LSeq,App,Fun,Train,LBind,Lit,Verb,Adverb,Id,Omit
+
 abstract type Syn end
 
-export Syn,Seq,App,Fun,Train,LBind,Lit,Verb,Adverb,Id,Omit
+struct Lit <: Syn
+  v::Union{Int64,Float64,Symbol,String}
+end
 
 struct Seq <: Syn
   body::Vector{Syn}
+end
+
+struct LSeq <: Syn
+  body::Vector{Lit}
 end
 
 struct App <: Syn
@@ -156,10 +164,6 @@ struct Fun <: Syn
   body::Vector{Syn}
 end
 
-struct Lit <: Syn
-  v::Union{Int64,Float64,Symbol,String}
-end
-
 struct Verb <: Syn
   v::Symbol
   Verb(v::String) = new(Symbol(v))
@@ -169,6 +173,7 @@ end
 struct Adverb <: Syn
   v::Symbol
   arg::Syn
+  Adverb(v::Symbol, arg) = new(v, arg)
   Adverb(v::String, arg) = new(Symbol(v), arg)
 end
 
@@ -190,13 +195,13 @@ self = Verb("::")
 dyadics2monadics = Dict(zip(dyadics, monadics))
 for v in [right, self]; dyadics2monadics[v] = v end
 
-monadics_av = Set(Verb.(['\'']))
+monadics_av = Set(Symbol.(['\'']))
 
 import AbstractTrees
 
 AbstractTrees.nodetype(s::Syn) = nameof(typeof(s))
 AbstractTrees.children(s::Syn) = []
-AbstractTrees.children(s::Union{Seq,Fun}) = s.body
+AbstractTrees.children(s::Union{LSeq,Seq,Fun}) = s.body
 AbstractTrees.children(s::App) = [s.head, s.args...]
 AbstractTrees.children(s::Train) = [s.head, s.next]
 AbstractTrees.children(s::LBind) = [s.v, s.arg]
@@ -329,7 +334,7 @@ function term(ctx::ParseContext)::Union{N,V,Nothing}
     elseif next === :bitmask
       _, value = consume!(ctx)
       value = Lit.(Base.parse.(Int64, collect(value[1:end-1])))
-      N((length(value) == 1 ? value[1] : Seq(value)))
+      N((length(value) == 1 ? value[1] : LSeq(value)))
     elseif next === :str
       _, value = consume!(ctx)
       N(Lit(value))
@@ -397,7 +402,7 @@ function number(ctx::ParseContext)
   syn = number0(ctx)
   next = peek(ctx)
   if next === :int || next === :float
-    syn = Seq([syn])
+    syn = LSeq([syn])
     while true
       push!(syn.body, number0(ctx))
       next = peek(ctx)
@@ -423,7 +428,7 @@ function symbol(ctx::ParseContext)
   syn = symbol0(ctx)
   next = peek(ctx)
   if next === :symbol
-    syn = Seq([syn])
+    syn = LSeq([syn])
     while true
       push!(syn.body, symbol0(ctx))
       next = peek(ctx)
@@ -499,23 +504,37 @@ KAtom = Union{Float64,Int64,Symbol,Char}
 replicate(v, n) =
   reduce(vcat, fill.(v, n))
 
+tryidentity(@nospecialize(f), T::Type, @nospecialize(d)) =
+  T != Any && hasmethod(f, (Type{T},)) ? f(T) : d
+
 identity(f) =
   if f === kadd; 0
   elseif f === ksub; 0
   elseif f === kmul; 1
   elseif f === kdiv; 1
-  elseif f === kand; 0
-  elseif f === kor; 0
+  elseif f === kand; typemax(Int64)
+  elseif f === kor; typemin(Int64) + 1
   elseif f === kconcat; Any[]
   else; nothing
   end
 identity(f, T::Type) =
-  if f === kadd; zero(T)
-  elseif f === ksub; zero(T)
-  elseif f === kmul; one(T)
-  elseif f === kdiv; one(T)
-  elseif f === kand; zero(T)
-  elseif f === kor; zero(T)
+  if f === kadd; tryidentity(zero, T, 0)
+  elseif f === ksub; tryidentity(zero, T, 0)
+  elseif f === kmul; tryidentity(one, T, 1)
+  elseif f === kdiv; tryidentity(one, T, 1)
+  elseif f === kand; tryidentity(typemax, T, identity(f))
+  elseif f === kor
+    hasmethod(one, (T,)) ? typemin(T) + one(T) : identity(f)
+  elseif f === kconcat; T <: Vector ? eltype(T)[] : T[]
+  else; nothing
+  end
+scanidentity(f, T::Type) =
+  if f === kadd; nothing
+  elseif f === ksub; nothing
+  elseif f === kmul; nothing
+  elseif f === kdiv; nothing
+  elseif f === kand; nothing
+  elseif f === kor; nothing
   elseif f === kconcat; T <: Vector ? eltype(T)[] : T[]
   else; nothing
   end
@@ -795,6 +814,11 @@ struct Join <: AFunction
 end
 arity(::Join)::Arity = (1, 1)
 
+struct Decode{T} <: AFunction
+  b::T
+end
+arity(::Decode)::Arity = (1, 1)
+
 # f/ converge
 (o::FoldM)(x) =
   begin
@@ -846,12 +870,33 @@ arity(::Join)::Arity = (1, 1)
     end
     r
   end
+(o::Decode)(x::Vector{<:Number}) = decode1(o.b, x)
 
-# TODO: I/ decode
+decode1(b::Int64, x::Vector{<:Number}) =
+  begin
+    r, lenx = 0, length(x)
+    @inbounds for i in 0:lenx-1
+      r = kadd(r, kmul(b^i, x[end-i]))
+    end
+    r
+  end
+decode1(b::Vector{Int64}, x::Vector{<:Number}) =
+  begin
+    lenx = length(x)
+    @assert length(b) == lenx
+    lenx == 0 && return zero(eltype(x))
+    r, b′ = x[end], b[end]
+    @inbounds for i in 2:lenx
+      r = r + b′ .* x[end - i + 1]
+      b′ = b′ * b[end - i + 1]
+    end
+    r
+  end
 
-kfold(f::KFunction) = arity(f)[1] == 2 ? FoldD(f) : FoldM(f)
+kfold(f::KFunction) = arity(f)[1] >= 2 ? FoldD(f) : FoldM(f)
 kfold(s::Vector{Char}) = Join(s)
 kfold(s::Char) = Join(Char[s])
+kfold(b::Union{Int64,Vector{Int64}}) = Decode(b)
 
 # scan
 
@@ -862,15 +907,19 @@ struct Split <: AFunction
   s::Vector{Char}
 end
 arity(::Split)::Arity = (1, 1)
-
-# TODO: I\ encode
+struct Encode{T} <: AFunction
+  b::T
+end
+arity(::Encode)::Arity = (1, 1)
 
 #   F\ scan      +\1 2 3 -> 1 3 6
+# TODO: is this correct?
+(o::ScanD)(x) = x
 (o::ScanD)(x::Vector) =
   begin
     isempty(x) ? x : begin
       ET, len = eltype(x), length(x)
-      id = identity(o.f, eltype(x))
+      id = scanidentity(o.f, isempty(x) ? eltype(x) : typeof(x[1]))
       if id === nothing
         T = promote_type(Base.promote_op(o.f, ET, ET), ET)
         r = Vector{T}(undef, len)
@@ -883,13 +932,13 @@ arity(::Split)::Arity = (1, 1)
       end
     end
   end
-# TODO: is this correct?
-(o::ScanD)(x) = x
+(o::ScanD)(x::AbstractDict) =
+  isempty(x) ? x : OrderedDict(zip(keys(x), o(collect(values(x)))))
 # x F\ seeded \  10+\1 2 3 -> 11 13 16
 (o::ScanD)(x, y) = o.f(x, y)
 (o::ScanD)(x, y::Vector) = isempty(y) ? y : accumulate(o.f, y, init=x)
 (o::ScanD)(x, y::AbstractDict) =
-  isempty(y) ? y : OrderedDict(zip(keys(y), o(x, values(y))))
+  isempty(y) ? y : OrderedDict(zip(keys(y), o(x, collect(values(y)))))
 # i f\ n-dos     5(2*)\1 -> 1 2 4 8 16 32
 (o::ScanM)(x::Int64, y) =
   begin
@@ -930,7 +979,6 @@ arity(::Split)::Arity = (1, 1)
   end
 # C\ split
 (o::Split)(x::Vector{Char}) = begin
-  if isempty(x); return Vector{Char}[] end
   s, lens, lenx = o.s, length(o.s), length(x)
   r = Vector{Char}[]
   i, previ = 1, 1
@@ -943,15 +991,80 @@ arity(::Split)::Arity = (1, 1)
       i = i + 1
     end
   end
-  if previ == i
-    push!(r, x[i:end])
-  end
+  push!(r, x[previ:end])
   r
 end
+(o::Encode)(x::Int64) = encode1(o.b, x)
+(o::Encode)(x::Vector{<:Number}) = encodeM(o.b, x)
+
+encode1(b::Int64, x::Number) =
+  begin
+    T = typeof(x)
+    ns, t0 = T[], zero(T)
+    while x != t0
+      x, n = divrem(x, b)
+      push!(ns, n)
+    end
+    reverse!(ns)
+  end
+encode1(b::Vector{Int64}, x::Number) =
+  begin
+    T, len = typeof(x), length(b)
+    ns, t0 = Vector{T}(undef, len), zero(T)
+    @inbounds for i in len:-1:1
+      ns[i] = if x != t0
+        x, n = divrem(x, b[i])
+        n
+      else
+        t0
+      end
+    end
+    ns
+  end
+encodeM(b::Int64, x::Vector{<:Number}) =
+  begin
+    T, len = eltype(x), length(x)
+    ns = Vector{T}[]
+    len == 0 && return ns
+    x, left, t0 = copy(x), len, zero(T)
+    while left != 0
+      row = Vector{T}(undef, len)
+      @inbounds for i in 1:len
+        row[i] = if x[i] != t0
+          x[i], n = divrem(x[i], b)
+          x[i] == t0 && (left = left - 1)
+          n
+        else
+          t0
+        end
+      end
+      push!(ns, row)
+    end
+    reverse!(ns)
+  end
+encodeM(b::Vector{Int64}, x::Vector{<:Number}) =
+  begin
+    T, lenx, lenb = eltype(x), length(x), length(b)
+    lenx == 0 && return [T[] for _ in 1:lenb]
+    x, ns, t0 = copy(x), Vector{Vector{T}}(undef, lenb), zero(T)
+    @inbounds for j in lenb:-1:1
+      row = Vector{T}(undef, lenx)
+      @inbounds for i in 1:lenx
+        row[i] = if x[i] != t0
+          x[i], n = divrem(x[i], b[j]); n
+        else
+          t0
+        end
+      end
+      ns[j] = row
+    end
+    ns
+  end
 
 kscan(f::KFunction) = arity(f)[1] == 2 ? ScanD(f) : ScanM(f)
 kscan(s::Vector{Char}) = Split(s)
 kscan(s::Char) = Split(Char[s])
+kscan(b::Union{Int64,Vector{Int64}}) = Encode(b)
 
 # each
 
@@ -984,7 +1097,7 @@ keach′(f, d::AbstractDict) =
 kself(x) = x
 
 # : right
-kright(x, y) = x
+kright(x, y) = y
 
 # + x
 kflip(x) = [[x]]
@@ -1156,11 +1269,18 @@ keq(x, y) = Int(x == y)
 kenlist(x) = [x]
 
 # x,y concat
-kconcat(x, y) = [x, y]
-kconcat(x, y::Vector) = [x, y...]
-kconcat(x::Vector, y) = [x..., y]
-kconcat(x::Vector, y::Vector) = vcat(x, y)
+kconcat(x, y) = Any[x, y]
+kconcat(x::T, y::T) where T = T[x, y]
+kconcat(x, y::Vector) = Any[x, y...]
+kconcat(x::T, y::Vector{T}) where T = T[x, y...]
+kconcat(x::Vector, y) = Any[x..., y]
+kconcat(x::Vector{T}, y::T) where T = T[x..., y]
+kconcat(x::Vector, y::Vector) = Any[x..., y...]
+kconcat(x::Vector{T}, y::Vector{T}) where T = vcat(x, y)
 kconcat(x::AbstractDict, y::AbstractDict) = merge(x, y)
+
+klist(x::T...) where T = [x...]
+klist(x...) = Any[x...]
 
 # ^x null
 knull(x) = 0
@@ -1192,17 +1312,23 @@ klen(x::AbstractDict) = length(x)
 kreshape(x::Int64, y) = kreshape(x, [y])
 kreshape(x::Int64, y::Vector) =
   begin
-    if x == 0; return empty(y) end
+    x == 0 && return empty(y)
+    x == Null.int_null && return y
     it, len = x>0 ? (y, x) : (Iterators.reverse(y), -x)
     collect(Iterators.take(Iterators.cycle(it), len))
   end
 
 # I#y reshape
-kreshape(x::Vector, y) = kreshape(x, [y])
-kreshape(x::Vector, y::Vector) = 
-  length(x) == 0 ?
-    Any[] :
-    kreshape0(x, 1, Iterators.Stateful(Iterators.cycle(y)))
+kreshape(x::Vector{Int64}, y) = kreshape(x, [y])
+kreshape(x::Vector{Int64}, y::Vector) = 
+  begin
+    lenx = length(x)
+    lenx == 0 && return app(y, 1)
+    x[1] == 0 && return Any[]
+    lenx == 1 && x[1] == Null.int_null && return y
+    it = Iterators.Stateful(Iterators.cycle(y))
+    kreshape0(x, 1, it)
+  end
 kreshape0(x, idx, it) =
   begin
     @assert x[idx] >= 0
@@ -1414,7 +1540,7 @@ compile1(syn::App) =
       rhs=args[1]
       :(return $rhs)
     elseif f isa Union{Verb,Adverb}
-      @assert length(args) in (1, 2)
+      # @assert length(args) in (1, 2)
       f = compilefun(f)
       compileapp(f, args, pargs)
     elseif f isa Fun
@@ -1449,7 +1575,14 @@ compile1(syn::Lit) =
     syn.v
   end
 compile1(syn::Id) = :($(syn.v))
-compile1(syn::Seq) = :([$(map(compile1, syn.body)...)])
+compile1(syn::Seq) = :($(Runtime.klist)($(map(compile1, syn.body)...)))
+compile1(syn::LSeq) =
+  begin
+    T = length(syn.body) == 1 ?
+      typeof(syn.body[1].v) :
+      foldl(promote_type, map(e -> typeof(e.v), syn.body))
+    :($T[$(map(compile1, syn.body)...)])
+  end
 compile1(syn::LBind) = compile1(App(syn.v, syn.arg))
 compile1(syn::Union{Verb,Adverb,Train}) = :($(compilefun(syn)))
 
@@ -1515,7 +1648,7 @@ compilefun(syn::Adverb) =
   end
 
 implicitargs(syn::Id) = syn.v===:x,syn.v===:y,syn.v===:z
-implicitargs(syn::Union{Omit,Lit,Verb,Fun}) = false,false,false
+implicitargs(syn::Union{Omit,Lit,Verb,Fun,LSeq}) = false,false,false
 implicitargs(syn::Union{Adverb}) = implicitargs([syn.arg])
 implicitargs(syn::App) = implicitargs([syn.head, syn.args...])
 implicitargs(syn::Fun) = false,false,false

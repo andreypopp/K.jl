@@ -95,4 +95,4 @@ Works with dictionaries as well, distributing the operation along its values:
     K.Runtime.OrderedDict{Symbol, Int64} with 3 entries:
       :a => 1
       :b => 2
-      :c => 0
+      :c => 4

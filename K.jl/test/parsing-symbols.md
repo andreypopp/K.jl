@@ -16,19 +16,19 @@ Lists of symbol (stranding):
 
     julia> K.parse("`some`another")
     Seq
-    └─ Seq
+    └─ LSeq
        ├─ Lit(:some)
        └─ Lit(:another)
     
     julia> K.parse("`some`")
     Seq
-    └─ Seq
+    └─ LSeq
        ├─ Lit(:some)
        └─ Lit(Symbol(""))
     
     julia> K.parse("```some`")
     Seq
-    └─ Seq
+    └─ LSeq
        ├─ Lit(Symbol(""))
        ├─ Lit(Symbol(""))
        ├─ Lit(:some)

@@ -79,7 +79,7 @@ Create a nested list:
 Lists can be irregular (non-rectangular) in its shape:
 
     julia> k"((1 2; 3 4); 5 6)"
-    2-element Vector{Vector}:
+    2-element Vector{Any}:
      [[1, 2], [3, 4]]
      [5, 6]
 

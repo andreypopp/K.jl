@@ -63,7 +63,7 @@ In case a key is missing, null value will be returned for this key:
 
     julia> k"lists:`a`b!(1.0 2;3 4)";
 
-    julia> k"dicts:`a`b!(`c`d!1.0 2;`d`e!3.0 4)";
+    julia> k"dicts:`a`b!(`c`d!1.0 2;`d`e!3 4)";
 
     julia> k"lists[`a;0]"
     1.0
@@ -72,14 +72,14 @@ In case a key is missing, null value will be returned for this key:
     1.0
     
     julia> k"lists[;0]"
-    K.Runtime.OrderedDict{Symbol, Float64} with 2 entries:
+    K.Runtime.OrderedDict{Symbol, Real} with 2 entries:
       :a => 1.0
-      :b => 3.0
+      :b => 3
 
     julia> k"dicts[;`d]"
-    K.Runtime.OrderedDict{Symbol, Float64} with 2 entries:
+    K.Runtime.OrderedDict{Symbol, Real} with 2 entries:
       :a => 2.0
-      :b => 3.0
+      :b => 3
 
 ## Dicts with complex keys
 

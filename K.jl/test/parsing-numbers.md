@@ -38,7 +38,7 @@ Bit masks:
 
     julia> K.parse("101b")
     Seq
-    └─ Seq
+    └─ LSeq
        ├─ Lit(1)
        ├─ Lit(0)
        └─ Lit(1)
@@ -98,35 +98,35 @@ Stranding:
 
     julia> K.parse("1 2 3")
     Seq
-    └─ Seq
+    └─ LSeq
        ├─ Lit(1)
        ├─ Lit(2)
        └─ Lit(3)
 
     julia> K.parse("1.0 2 3")
     Seq
-    └─ Seq
+    └─ LSeq
        ├─ Lit(1.0)
        ├─ Lit(2)
        └─ Lit(3)
 
     julia> K.parse("1.0 -2 3")
     Seq
-    └─ Seq
+    └─ LSeq
        ├─ Lit(1.0)
        ├─ Lit(-2)
        └─ Lit(3)
 
     julia> K.parse("-1 -2 -3")
     Seq
-    └─ Seq
+    └─ LSeq
        ├─ Lit(-1)
        ├─ Lit(-2)
        └─ Lit(-3)
 
     julia> K.parse("1 -2")
     Seq
-    └─ Seq
+    └─ LSeq
        ├─ Lit(1)
        └─ Lit(-2)
 
