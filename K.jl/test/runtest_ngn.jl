@@ -38,10 +38,13 @@ end
                            # >
                            raw"(20>)(2*)\1"
                            raw"(20>)(2*)/1"
+                           raw"`a`b`c<`b"
+                           raw"<0"
                            # ?
                            raw"?/'(!0;0#0n)"
                            # tables
                            raw"+\+`a`b!+(1 2;3 4;5 6)"
+                           raw"t:+d:`a`b!2 3#!6;t,d"
                            # ??? ngn/k returns (0; -0.0)
                            raw"-/'(!0;0#0n)"
                            # $[x;y;z]
@@ -60,17 +63,22 @@ end
                            raw"2/(1 1 0;0 1 0;1 0 1)"
                            # reassignment
                            raw"a.b:!2;{a.b,:x}2;a.b"
+                           # not supported
+                           raw"(`?`@{1+2*x})3"
                           ])
   @testset "eval" begin
     for (t, e) in cases
-      if t in eval_skip
-        @warn "$t -> $e"
-      else
+      skipped = t in eval_skip ||
+                startswith(t, "`?") ||
+                startswith(t, "`j") ||
+                startswith(t, "`k") ||
+                startswith(t, "`0")
+      if !skipped
         @info "$t -> $e"
       end
       @test begin
         K.Runtime.isequal(k(t, Main), k(e, Main))
-      end skip=(t in eval_skip)
+      end skip=skipped
     end
   end
 end

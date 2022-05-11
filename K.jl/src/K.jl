@@ -789,12 +789,12 @@ end
 # trains
 
 struct Train <: AFunction
-  head::KFunction
-  next::KFunction
+  head::Any
+  next::Any
 end
 arity(::Train)::Arity = (1, 2)
-(o::Train)(x) = o.head(o.next(x))
-(o::Train)(x, y) = o.head(o.next(x, y))
+(o::Train)(x) = app(o.head, app(o.next, x))
+(o::Train)(x, y) = app(o.head, app(o.next, x, y))
 
 # adverbs
 
@@ -1460,6 +1460,33 @@ ktype(x::Vector{Float64}) = :D
 ktype(x::Vector{Symbol}) = :S
 ktype(x::Vector{Char}) = :C
 ktype(x::Vector) = :A
+ktype(x::Train) = :q
+
+# X?y find
+kfind(x::Vector, y) = kfind1(x, y)
+kfind(x::Vector, y::Vector) = kfindM(x, y, rank(x), rank(y))
+
+kfind1(x::Vector, y) =
+  begin
+    i = findfirst(y′ -> 1==kmatch(y, y′), x)
+    i !== nothing ? i - 1 : Null.int_null
+  end
+kfindM(x::Vector, y::Vector) =
+  begin
+    isempty(y) && return Int64[]
+    m = Dict(x′ => i - 1 for (i, x′) in enumerate(x))
+    map(y′ -> get(m, y′, Null.int_null), y)
+  end
+kfindM(x::Vector, y, xrank::Int64, yrank::Int64) =
+  kfind1(x, y)
+kfindM(x::Vector, y::Vector, xrank::Int64, yrank::Int64) =
+  begin
+    yrank == xrank ?
+    kfindM(x, y) :
+    yrank >= xrank ?
+    kfindM.(Ref(x), y, xrank, yrank - 1) :
+    kfind1(x, y)
+  end
 
 end
 
@@ -1498,10 +1525,11 @@ verbs = Dict(
              Symbol(raw"_")  => Runtime.kdrop,
              Symbol(raw"$:") => Runtime.kstring,
              Symbol(raw"?:") => Runtime.kuniq,
-             Symbol(raw"@")  => Runtime.app,
              Symbol(raw".:") => Runtime.kget,
              Symbol(raw".")  => Runtime.kappn,
+             Symbol(raw"@")  => Runtime.app,
              Symbol(raw"@:") => Runtime.ktype,
+             Symbol(raw"?") => Runtime.kfind,
             )
 
 adverbs = Dict(
@@ -1535,10 +1563,14 @@ compile1(syn::App) =
         length(args)==2 && args[1] isa Symbol
       # assignment `n:x`
       @assert isempty(pargs) "cannot project n:x"
-      name,rhs=args[1],args[2]
+      name,rhs=args
       :(begin $name = $rhs end)
-    elseif f isa Verb && f.v===:(:) &&
-        length(args)==1
+    elseif f isa Verb && f.v === :($) && length(args)==3
+      # conditional `$[c;t;e]`
+      @assert isempty(pargs) raw"cannot project $[c;t;e]"
+      c,t,e=args
+      :(if $c==1; $t; else $e end)
+    elseif f isa Verb && f.v===:(:) && length(args)==1
       # return `:x`
       @assert isempty(pargs) "cannot project :x"
       rhs=args[1]
@@ -1643,7 +1675,7 @@ compilefun(syn::Verb) =
   end
 compilefun(syn::Adverb) =
   begin
-    adverb = get(adverbs, syn.v, (nothing, nothing))
+    adverb = get(adverbs, syn.v, nothing)
     @assert adverb !== nothing "adverb is not implemented: $(syn.v)"
     verb = compilefun(syn.arg)
     if verb isa Runtime.KFunction
