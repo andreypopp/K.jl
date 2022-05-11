@@ -553,15 +553,15 @@ isequal(x::Float64, y::Float64) = x === y # 1=0n~0n
 isequal(x::Vector, y::Vector) where T =
   begin
     len = length(x)
-    if len != length(y); return false end
+    len != length(y) && return false
     @inbounds for i in 1:len
-      if !isequal(x[i], y[i]); return false end
+      !isequal(x[i], y[i]) && return false
     end
     return true
   end
 isequal(x::AbstractDict{K,V}, y::AbstractDict{K,V}) where {K,V} =
-  if length(x) != length(y); return false
-  else
+  begin
+    length(x) != length(y) && return false
     for (xe, ye) in zip(x, y)
       if !isequal(xe.first, ye.first) ||
          !isequal(xe.second, ye.second)
@@ -655,9 +655,14 @@ outdex(x::AbstractDict) =
 
 # application
 
-app(f::KFunction, args...) =
+app(@nospecialize(f::KFunction), args...) =
   begin
-    flen, alen = arity(f), length(args)
+    flen, alen =
+      if f == app
+        arity(args[1]), length(args) - 1
+      else
+        arity(f), length(args)
+      end
     if alen in flen; f(args...)
     elseif alen < first(flen); PFunction(f, args, flen[1] - alen)
     else; @assert false "arity error"
@@ -1369,6 +1374,8 @@ kreshape0(x, idx, it) =
 # f#y replicate
 kreshape(x::KFunction, y) = 
   replicate(y, x(y))
+kreshape(x::KFunction, y::AbstractDict) = 
+  OrderedDict(replicate(collect(y), x(collect(values(y)))))
 
 # x#d take
 kreshape(x::Vector, y::AbstractDict) = 
@@ -1398,6 +1405,19 @@ kdrop(x, y::AbstractDict) =
   haskey(y, x) ?
     OrderedDict(filter(item -> 0==kmatch(item.first, x), y)) :
     y
+kdrop(x::Vector, y::AbstractDict) =
+  begin
+    isempty(y) && return y
+    xrank, yrank = rank(x), urank(first(y).first)
+    if xrank >= yrank
+      m = OrderedDict(x .=> true)
+      OrderedDict(filter(item -> !haskey(m, item.first), y))
+    else
+      haskey(y, x) ?
+        OrderedDict(filter(item -> 0==kmatch(item.first, x), y)) :
+        y
+    end
+  end
 
 # I_Y cut
 kdrop(x::Vector{Int64}, y::Vector) =
@@ -1639,7 +1659,10 @@ compile1(syn::Lit) =
     syn.v
   end
 compile1(syn::Id) = :($(syn.v))
-compile1(syn::Seq) = :($(Runtime.klist)($(map(compile1, syn.body)...)))
+compile1(syn::Seq) =
+  compileargs(syn.body) do args
+    :($(Runtime.klist)($(args...)))
+  end
 compile1(syn::LSeq) =
   begin
     T = length(syn.body) == 1 ?
@@ -1650,9 +1673,21 @@ compile1(syn::LSeq) =
 compile1(syn::LBind) = compile1(App(syn.v, syn.arg))
 compile1(syn::Union{Verb,Adverb,Train}) = :($(compilefun(syn)))
 
+compileargs(f, args::Vector{Syn}) =
+  begin
+    bindings = []
+    args′ = []
+    for arg in args
+      sym = gensym("arg")
+      push!(bindings, :($sym = $(compile1(arg));))
+      push!(args′, sym)
+    end
+    :(begin; $(bindings...); $(f(args′)) end)
+  end
+
 compileapp(f, args, pargs) =
-  if isempty(pargs); compileapp(f, args)
-  else
+  isempty(pargs) ? compileapp(f, args) :
+  begin
     f′ = gensym("f")
     expr = compileapp(f′, args)
     :(let $f′ = $f
@@ -1666,15 +1701,14 @@ compileapp(f, args, pargs) =
       end)
   end
 compileapp(f::Runtime.KFunction, args, pargs) =
-  if isempty(pargs); compileapp(f, args)
-  else
-    expr = compileapp(f, args)
-    :(($(pargs...),) -> $expr)
-  end
+  isempty(pargs) ?
+    compileapp(f, args) :
+    :(($(pargs...),) -> $(compileapp(f, args)))
 compileapp(f, args) =
   :($(Runtime.app)($(f), $(args...)))
 compileapp(f::Runtime.KFunction, args) =
   begin
+    f == Runtime.app && return :($(Runtime.app)($(f), $(args...)))
     flen, alen = Runtime.arity(f), length(args)
     if alen in flen
       :($f($(args...)))
