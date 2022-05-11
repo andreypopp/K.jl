@@ -476,27 +476,32 @@ Base.promote_op(f::PFunction, S::Type...) =
 
 # Arity (min, max)
 
-Arity = Tuple{Int8, Int8}
+Arity = UnitRange{Int64}
 
-arity(f::PFunction)::Arity = (f.arity, f.arity)
+arity(f::PFunction)::Arity = f.arity:f.arity
 arity(f::Function)::Arity =
   begin
-    monad,dyad,arity = false,false,0
+    monad,dyad,triad,arity = false,false,false,0
     for m in methods(f)
       marity = m.nargs - 1
-      monad,dyad = monad||marity==1,dyad||marity==2
-      if marity!=1&&marity!=2
+      monad,dyad,triad = monad||marity==1,dyad||marity==2,triad||marity==3
+      if marity!=1&&marity!=2&&marity!=3
         @assert arity==0 || arity==marity "invalid arity"
         arity = marity
       end
     end
-        if dyad       &&arity!=0; @assert false "invalid arity"
-    elseif       monad&&arity!=0; @assert false "invalid arity"
-    elseif dyad&&monad          ; (1, 2)
-    elseif dyad                 ; (2, 2)
-    elseif       monad          ; (1, 1)
-    elseif              arity!=0; (arity,arity)
-    else                        ; @assert false "invalid arity"
+        if              triad&&arity!=0; @assert false "invalid arity"
+    elseif        dyad       &&arity!=0; @assert false "invalid arity"
+    elseif monad             &&arity!=0; @assert false "invalid arity"
+    elseif monad&&dyad&&triad          ; 1:3
+    elseif monad      &&triad          ; @assert false "invalid arity"
+    elseif monad&&dyad                 ; 1:2
+    elseif        dyad&&triad          ; 2:3
+    elseif monad                       ; 1:1
+    elseif        dyad                 ; 2:2
+    elseif              triad          ; 3:3
+    elseif                     arity!=0; arity:arity
+    else                               ; @assert false "invalid arity"
     end
   end
 
@@ -532,7 +537,7 @@ identity(f, T::Type) =
   else; nothing
   end
 scanidentity(f, T::Type) =
-  if f === kadd; nothing
+  if f === kadd; tryidentity(zero, T, 0)
   elseif f === ksub; nothing
   elseif f === kmul; nothing
   elseif f === kdiv; nothing
@@ -654,7 +659,7 @@ app(f::KFunction, args...) =
   begin
     flen, alen = arity(f), length(args)
     if alen in flen; f(args...)
-    elseif flen[1] > alen; PFunction(f, args, flen[1] - alen)
+    elseif alen < first(flen); PFunction(f, args, flen[1] - alen)
     else; @assert false "arity error"
     end
   end
@@ -792,7 +797,8 @@ struct Train <: AFunction
   head::Any
   next::Any
 end
-arity(::Train)::Arity = (1, 2)
+# TODO: should we ask next for arity?
+arity(::Train)::Arity = 1:2
 (o::Train)(x) = app(o.head, app(o.next, x))
 (o::Train)(x, y) = app(o.head, app(o.next, x, y))
 
@@ -809,18 +815,18 @@ end
 
 # fold
 
-@adverb FoldM (1, 2)
-@adverb FoldD (1, 2)
+@adverb FoldM 1:2
+@adverb FoldD 1:3
 
 struct Join <: AFunction
   s::Vector{Char}
 end
-arity(::Join)::Arity = (1, 1)
+arity(::Join)::Arity = 1:1
 
 struct Decode{T} <: AFunction
   b::T
 end
-arity(::Decode)::Arity = (1, 1)
+arity(::Decode)::Arity = 1:1
 
 # f/ converge
 (o::FoldM)(x) =
@@ -859,6 +865,13 @@ arity(::Decode)::Arity = (1, 1)
 # x F/ seeded /  10+/1 2 3 -> 16
 (o::FoldD)(x, y) = foldl(o.f, y, init=x)
 (o::FoldD)(x::AbstractDict) = o(values(x))
+# F/[n;x;y] n-element of a recurrent series defined by F
+(o::FoldD)(n, x, y) =
+  begin
+    @assert n >= 0
+    while n >= 0; n, x, y = n - 1, app(o.f, x, y), x end
+    x
+  end
 
 # C/ join
 (o::Join)(x::Vector) =
@@ -896,24 +909,24 @@ decode1(b::Vector{Int64}, x::Vector{<:Number}) =
     r
   end
 
-kfold(f::KFunction) = arity(f)[1] >= 2 ? FoldD(f) : FoldM(f)
+kfold(f::KFunction) = first(arity(f)) >= 2 ? FoldD(f) : FoldM(f)
 kfold(s::Vector{Char}) = Join(s)
 kfold(s::Char) = Join(Char[s])
 kfold(b::Union{Int64,Vector{Int64}}) = Decode(b)
 
 # scan
 
-@adverb ScanM (1, 2)
-@adverb ScanD (1, 2)
+@adverb ScanM 1:2
+@adverb ScanD 1:3
 
 struct Split <: AFunction
   s::Vector{Char}
 end
-arity(::Split)::Arity = (1, 1)
+arity(::Split)::Arity = 1:1
 struct Encode{T} <: AFunction
   b::T
 end
-arity(::Encode)::Arity = (1, 1)
+arity(::Encode)::Arity = 1:1
 
 #   F\ scan      +\1 2 3 -> 1 3 6
 # TODO: is this correct?
@@ -977,6 +990,19 @@ arity(::Encode)::Arity = (1, 1)
       !(hash(x′) == hash(x) && isequal(x, x′)) || break
       x = x′
       push!(r, x)
+    end
+    r
+  end
+# F\[n;x;y] n first elements of a recurrent series defined by F
+(o::ScanD)(n, x, y) =
+  begin
+    @assert n >= 0
+    T = Base.promote_op(o.f, typeof(x), typeof(x))
+    r = Vector{T}(undef, n + 2)
+    r[1] = x
+    @inbounds while n >= 0
+      n, x, y = n - 1, app(o.f, x, y), x
+      r[end - n - 1] = x
     end
     r
   end
@@ -1064,15 +1090,15 @@ encodeM(b::Vector{Int64}, x::Vector{<:Number}) =
     ns
   end
 
-kscan(f::KFunction) = arity(f)[1] == 2 ? ScanD(f) : ScanM(f)
+kscan(f::KFunction) = first(arity(f)) == 2 ? ScanD(f) : ScanM(f)
 kscan(s::Vector{Char}) = Split(s)
 kscan(s::Char) = Split(Char[s])
 kscan(b::Union{Int64,Vector{Int64}}) = Encode(b)
 
 # each
 
-@adverb EachM (1, 1)
-@adverb EachD (2, 2)
+@adverb EachM 1:1
+@adverb EachD 2:2
 
 #   f' each1
 (o::EachM)(x) = keach′(o.f, x)
@@ -1083,7 +1109,7 @@ kscan(b::Union{Int64,Vector{Int64}}) = Encode(b)
 (o::EachD)(x::Vector, y::Vector) =
   (@assert length(x) == length(y); o.f.(x, y))
 
-keach(f::KFunction) = arity(f)[1] == 2 ? EachD(f) : EachM(f)
+keach(f::KFunction) = first(arity(f)) == 2 ? EachD(f) : EachM(f)
 
 keach′(f, x) = f(x)
 keach′(f, x::Vector) =
@@ -1652,7 +1678,7 @@ compileapp(f::Runtime.KFunction, args) =
     flen, alen = Runtime.arity(f), length(args)
     if alen in flen
       :($f($(args...)))
-    elseif alen < flen[1]
+    elseif alen < first(flen)
       if !any(a -> a isa Expr, args)
         # PFunction application doesn't produce any side effects
         Runtime.PFunction(f, tuple(args...), flen[1] - alen)
