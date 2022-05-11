@@ -30,10 +30,12 @@ rbracket = re"\]"
 lbrace   = re"{"
 rbrace   = re"}"
 space    = re" +"
+comment  = re.rep1(space) * re"/[^\r\n]*"
 newline  = re"\n+"
 semi     = re";"
 
 tokenizer = Automa.compile(
+  comment  => :(),
   float    => :(emitnumber(:float)),
   int      => :(emitnumber(:int)),
   bitmask  => :(emitnumber(:bitmask)),
