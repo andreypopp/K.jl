@@ -122,7 +122,7 @@ created even if supply more arguments than neccessary, calling the projection
 will result in an error though:
 
     julia> k"{x,y,z}[;1;2;3;4]"
-    … (generic function with 1 method)
+    *1:1-function*
 
     julia> k"{x,y,z}[;1;2;3;4][5]"
     ERROR: AssertionError: arity error

@@ -456,54 +456,80 @@ import ..Null
 
 # K-specific function types
 
-abstract type AFunction end
+abstract type AFun end
 
-KFunction = Union{Function,AFunction}
+Arity = UnitRange{Int64} # TODO: Int8
 
-struct PFunction <: AFunction
-  f::KFunction
+KFun = Union{Function,AFun}
+
+struct Fun <: AFun
+  f::KFun
+  arity::Arity
+  Fun(f::KFun, arity::Arity) = new(f, arity)
+  Fun(f::KFun, arity::Int64) = new(f, arity:arity)
+end
+(s::Fun)(args...) = s.f(args...)
+arity(f::Fun)::Arity = f.arity
+Base.promote_op(f::Fun, S::Type...) = Base.promote_op(f.f, S...)
+Base.show(io::IO, s::Fun) = print(io, "*$(s.arity)-function*")
+
+struct MFun <: AFun f::KFun end
+(s::MFun)(x) = s.f(x)
+arity(f::MFun)::Arity = 1:1
+Base.promote_op(f::MFun, S::Type...) = Base.promote_op(f.f, S...)
+Base.show(io::IO, s::MFun) = print(io, "*mfunction*")
+
+struct DFun <: AFun f::KFun end
+(s::DFun)(x, y) = s.f(x, y)
+arity(f::DFun)::Arity = 2:2
+Base.promote_op(f::DFun, S::Type...) = Base.promote_op(f.f, S...)
+Base.show(io::IO, s::DFun) = print(io, "*dfunction*")
+
+struct AppFun <: AFun end
+arity(o::AppFun) = 2:8
+Base.show(io::IO, s::AppFun) = print(io, "*app*")
+
+struct PFun <: AFun
+  f::KFun
   args::Tuple
-  arity::Int
-  PFunction(f, args, narr) =
+  arity::Int64
+  PFun(f, args, narr) =
     new(f, args, narr)
-  PFunction(f::PFunction, args, narr) =
+  PFun(f::PFun, args, narr) =
     new(f.f, (f.args..., args...), narr)
 end
-(s::PFunction)(args...) = s.f(s.args..., args...)
-Base.show(io::IO, s::PFunction) = print(io, "*$(s.arity)-pfunction*")
-Base.promote_op(f::PFunction, S::Type...) =
+(s::PFun)(args...) = s.f(s.args..., args...)
+arity(f::PFun)::Arity = f.arity:f.arity
+Base.show(io::IO, s::PFun) = print(io, "*$(s.arity)-pfunction*")
+Base.promote_op(f::PFun, S::Type...) =
   Base.promote_op(f.f, map(typeof, f.args)..., S...)
 
-# Arity (min, max)
-
-Arity = UnitRange{Int64}
-
-arity(f::PFunction)::Arity = f.arity:f.arity
-arity(f::Function)::Arity =
-  begin
-    monad,dyad,triad,arity = false,false,false,0
-    for m in methods(f)
-      marity = m.nargs - 1
-      monad,dyad,triad = monad||marity==1,dyad||marity==2,triad||marity==3
-      if marity!=1&&marity!=2&&marity!=3
-        @assert arity==0 || arity==marity "invalid arity"
-        arity = marity
-      end
-    end
-        if              triad&&arity!=0; @assert false "invalid arity"
-    elseif        dyad       &&arity!=0; @assert false "invalid arity"
-    elseif monad             &&arity!=0; @assert false "invalid arity"
-    elseif monad&&dyad&&triad          ; 1:3
-    elseif monad      &&triad          ; @assert false "invalid arity"
-    elseif monad&&dyad                 ; 1:2
-    elseif        dyad&&triad          ; 2:3
-    elseif monad                       ; 1:1
-    elseif        dyad                 ; 2:2
-    elseif              triad          ; 3:3
-    elseif                     arity!=0; arity:arity
-    else                               ; @assert false "invalid arity"
-    end
-  end
+# TODO: make it work?
+# arity(f::Function)::Arity =
+#   begin
+#     monad,dyad,triad,arity = false,false,false,0
+#     for m in methods(f)
+#       marity = m.nargs - 1
+#       monad,dyad,triad = monad||marity==1,dyad||marity==2,triad||marity==3
+#       if marity!=1&&marity!=2&&marity!=3
+#         @assert arity==0 || arity==marity "invalid arity"
+#         arity = marity
+#       end
+#     end
+#         if              triad&&arity!=0; @assert false "invalid arity"
+#     elseif        dyad       &&arity!=0; @assert false "invalid arity"
+#     elseif monad             &&arity!=0; @assert false "invalid arity"
+#     elseif monad&&dyad&&triad          ; 1:3
+#     elseif monad      &&triad          ; @assert false "invalid arity"
+#     elseif monad&&dyad                 ; 1:2
+#     elseif        dyad&&triad          ; 2:3
+#     elseif monad                       ; 1:1
+#     elseif        dyad                 ; 2:2
+#     elseif              triad          ; 3:3
+#     elseif                     arity!=0; arity:arity
+#     else                               ; @assert false "invalid arity"
+#     end
+#   end
 
 # K-types
 
@@ -655,19 +681,22 @@ outdex(x::AbstractDict) =
 
 # application
 
-app(@nospecialize(f::KFunction), args...) =
-  begin
-    flen, alen =
-      if f == app
-        arity(args[1]), length(args) - 1
-      else
-        arity(f), length(args)
-      end
-    if alen in flen; f(args...)
-    elseif alen < first(flen); PFunction(f, args, flen[1] - alen)
-    else; @assert false "arity error"
-    end
+macro papp(f, args)
+  f, args = esc(f), esc(args)
+  quote
+    flen, alen = arity($f), length($args)
+    if alen in flen; $f($args...)
+    elseif alen < flen.start; PFun($f, $args, flen[1] - alen)
+    else; @assert false "arity error" end
   end
+end
+
+app(o::MFun, x) = o.f(x)
+app(o::DFun, x) = PFun(o.f, (x,), 1)
+app(o::DFun, x, y) = o.f(x, y)
+app(o::AppFun, f, args...) = @papp(f, args)
+(o::AppFun)(f, args...) = @papp(f, args)
+app(@nospecialize(f::KFun), args...) = @papp(f, args)
 
 app(x::Vector, is...) =
   begin
@@ -798,7 +827,7 @@ end
 
 # trains
 
-struct Train <: AFunction
+struct Train <: AFun
   head::Any
   next::Any
 end
@@ -811,7 +840,7 @@ arity(::Train)::Arity = 1:2
 
 macro adverb(name, arr)
   quote
-    struct $(esc(name)) <: AFunction; f::Any end
+    struct $(esc(name)) <: AFun; f::Any end
     # TODO: this is incorrect, each adverb should define its own promotion...
     Base.promote_op(f::$(esc(name)), S::Type...) = Base.promote_op(f.f, S...)
     $(esc(:arity))(::$(esc(name)))::Arity = $arr
@@ -823,12 +852,12 @@ end
 @adverb FoldM 1:2
 @adverb FoldD 1:3
 
-struct Join <: AFunction
+struct Join <: AFun
   s::Vector{Char}
 end
 arity(::Join)::Arity = 1:1
 
-struct Decode{T} <: AFunction
+struct Decode{T} <: AFun
   b::T
 end
 arity(::Decode)::Arity = 1:1
@@ -844,7 +873,7 @@ arity(::Decode)::Arity = 1:1
     x
   end
 # f f/ while
-(o::FoldM)(x::KFunction, y) =
+(o::FoldM)(x::KFun, y) =
   begin
     while Bool(x(y))
       y = o.f(y)
@@ -914,7 +943,7 @@ decode1(b::Vector{Int64}, x::Vector{<:Number}) =
     r
   end
 
-kfold(f::KFunction) = first(arity(f)) >= 2 ? FoldD(f) : FoldM(f)
+kfold(f::KFun) = arity(f).start >= 2 ? FoldD(f) : FoldM(f)
 kfold(s::Vector{Char}) = Join(s)
 kfold(s::Char) = Join(Char[s])
 kfold(b::Union{Int64,Vector{Int64}}) = Decode(b)
@@ -924,11 +953,11 @@ kfold(b::Union{Int64,Vector{Int64}}) = Decode(b)
 @adverb ScanM 1:2
 @adverb ScanD 1:3
 
-struct Split <: AFunction
+struct Split <: AFun
   s::Vector{Char}
 end
 arity(::Split)::Arity = 1:1
-struct Encode{T} <: AFunction
+struct Encode{T} <: AFun
   b::T
 end
 arity(::Encode)::Arity = 1:1
@@ -975,7 +1004,7 @@ arity(::Encode)::Arity = 1:1
     r
   end
 # f f\ whiles
-(o::ScanM)(x::KFunction, y) =
+(o::ScanM)(x::KFun, y) =
   begin
     T = promote_type(Base.promote_op(o.f, typeof(y)), typeof(y))
     r = T[y]
@@ -1095,7 +1124,7 @@ encodeM(b::Vector{Int64}, x::Vector{<:Number}) =
     ns
   end
 
-kscan(f::KFunction) = first(arity(f)) == 2 ? ScanD(f) : ScanM(f)
+kscan(f::KFun) = arity(f).start == 2 ? ScanD(f) : ScanM(f)
 kscan(s::Vector{Char}) = Split(s)
 kscan(s::Char) = Split(Char[s])
 kscan(b::Union{Int64,Vector{Int64}}) = Encode(b)
@@ -1114,7 +1143,7 @@ kscan(b::Union{Int64,Vector{Int64}}) = Encode(b)
 (o::EachD)(x::Vector, y::Vector) =
   (@assert length(x) == length(y); o.f.(x, y))
 
-keach(f::KFunction) = first(arity(f)) == 2 ? EachD(f) : EachM(f)
+keach(f::KFun) = arity(f).start == 2 ? EachD(f) : EachM(f)
 
 keach′(f, x) = f(x)
 keach′(f, x::Vector) =
@@ -1264,7 +1293,8 @@ knot(x::Float64) = Int(x == 0.0)
 knot(x::Int64) = Int(x == 0.0)
 knot(x::Char) = Int(x == '\0')
 knot(x::Symbol) = Int(x == Null.symbol_null)
-knot(x::KFunction) = Int(x == kself)
+knot(x::KFun) = 0
+knot(x::MFun) = Int(x.f == kself)
 knot(x::Vector) = knot.(x)
 @monad4dict(knot)
 
@@ -1372,9 +1402,9 @@ kreshape0(x, idx, it) =
   end
 
 # f#y replicate
-kreshape(x::KFunction, y) = 
+kreshape(x::KFun, y) = 
   replicate(y, x(y))
-kreshape(x::KFunction, y::AbstractDict) = 
+kreshape(x::KFun, y::AbstractDict) = 
   OrderedDict(replicate(collect(y), x(collect(values(y)))))
 
 # x#d take
@@ -1438,7 +1468,7 @@ kdrop(x::Vector{Int64}, y::Vector) =
   end
 
 # f_Y filter out
-kdrop(x::KFunction, y::Vector) = y[0 .=== x(y)]
+kdrop(x::KFun, y::Vector) = y[0 .=== x(y)]
 
 # X_i delete
 kdrop(x::Vector, y::Int64) =
@@ -1538,50 +1568,52 @@ end
 
 module Compile
 using ..Syntax,..Parse
-import ..Runtime
+import ..Runtime as R
 
 verbs = Dict(
-             Symbol(raw"::") => Runtime.kself,
-             Symbol(raw":")  => Runtime.kright,
-             Symbol(raw"+:") => Runtime.kflip,
-             Symbol(raw"+")  => Runtime.kadd,
-             Symbol(raw"-:") => Runtime.kneg,
-             Symbol(raw"-")  => Runtime.ksub,
-             Symbol(raw"*:") => Runtime.kfirst,
-             Symbol(raw"*")  => Runtime.kmul,
-             Symbol(raw"%:") => Runtime.ksqrt,
-             Symbol(raw"%")  => Runtime.kdiv,
-             Symbol(raw"!:") => Runtime.kenum,
-             Symbol(raw"!")  => Runtime.kmod,
-             Symbol(raw"&:") => Runtime.kwhere,
-             Symbol(raw"&")  => Runtime.kand,
-             Symbol(raw"|:") => Runtime.krev,
-             Symbol(raw"|")  => Runtime.kor,
-             Symbol(raw"~:") => Runtime.knot,
-             Symbol(raw"~")  => Runtime.kmatch,
-             Symbol(raw"=:") => Runtime.kgroup,
-             Symbol(raw"=")  => Runtime.keq,
-             Symbol(raw",:") => Runtime.kenlist,
-             Symbol(raw",")  => Runtime.kconcat,
-             Symbol(raw"^:") => Runtime.knull,
-             Symbol(raw"^")  => Runtime.kfill,
-             Symbol(raw"#:") => Runtime.klen,
-             Symbol(raw"#")  => Runtime.kreshape,
-             Symbol(raw"_:") => Runtime.kfloor,
-             Symbol(raw"_")  => Runtime.kdrop,
-             Symbol(raw"$:") => Runtime.kstring,
-             Symbol(raw"?:") => Runtime.kuniq,
-             Symbol(raw".:") => Runtime.kget,
-             Symbol(raw".")  => Runtime.kappn,
-             Symbol(raw"@")  => Runtime.app,
-             Symbol(raw"@:") => Runtime.ktype,
-             Symbol(raw"?") => Runtime.kfind,
+             Symbol(raw"::") => R.MFun(R.kself),
+             Symbol(raw":")  => R.DFun(R.kright),
+             Symbol(raw"+:") => R.MFun(R.kflip),
+             Symbol(raw"+")  => R.DFun(R.kadd),
+             Symbol(raw"-:") => R.MFun(R.kneg),
+             Symbol(raw"-")  => R.DFun(R.ksub),
+             Symbol(raw"*:") => R.MFun(R.kfirst),
+             Symbol(raw"*")  => R.DFun(R.kmul),
+             Symbol(raw"%:") => R.MFun(R.ksqrt),
+             Symbol(raw"%")  => R.DFun(R.kdiv),
+             Symbol(raw"!:") => R.MFun(R.kenum),
+             Symbol(raw"!")  => R.DFun(R.kmod),
+             Symbol(raw"&:") => R.MFun(R.kwhere),
+             Symbol(raw"&")  => R.DFun(R.kand),
+             Symbol(raw"|:") => R.MFun(R.krev),
+             Symbol(raw"|")  => R.DFun(R.kor),
+             Symbol(raw"~:") => R.MFun(R.knot),
+             Symbol(raw"~")  => R.DFun(R.kmatch),
+             Symbol(raw"=:") => R.MFun(R.kgroup),
+             Symbol(raw"=")  => R.DFun(R.keq),
+             Symbol(raw",:") => R.MFun(R.kenlist),
+             Symbol(raw",")  => R.DFun(R.kconcat),
+             Symbol(raw"^:") => R.MFun(R.knull),
+             Symbol(raw"^")  => R.DFun(R.kfill),
+             Symbol(raw"#:") => R.MFun(R.klen),
+             Symbol(raw"#")  => R.DFun(R.kreshape),
+             Symbol(raw"_:") => R.MFun(R.kfloor),
+             Symbol(raw"_")  => R.DFun(R.kdrop),
+             Symbol(raw"$:") => R.MFun(R.kstring),
+             Symbol(raw"?:") => R.MFun(R.kuniq),
+             Symbol(raw".:") => R.MFun(R.kget),
+             Symbol(raw".")  => R.DFun(R.kappn),
+             Symbol(raw"@")  => R.AppFun(),
+             Symbol(raw"@:") => R.MFun(R.ktype),
+             Symbol(raw"?")  => R.DFun(R.kfind),
             )
 
+vself = verbs[:(::)]
+
 adverbs = Dict(
-               Symbol(raw"/")  => Runtime.kfold,
-               Symbol(raw"\\") => Runtime.kscan,
-               Symbol(raw"'")  => Runtime.keach,
+               Symbol(raw"/")  => R.kfold,
+               Symbol(raw"\\") => R.kscan,
+               Symbol(raw"'")  => R.keach,
               )
 
 compile(str::String) = compile(Parse.parse(str))
@@ -1604,7 +1636,7 @@ compile1(syn::App) =
         end
         args′, pargs
       end
-    if isempty(args); args = [Runtime.kself] end
+    if isempty(args); args = [vself] end
     if f isa Verb && f.v === :(:) &&
         length(args)==2 && args[1] isa Symbol
       # assignment `n:x`
@@ -1638,15 +1670,15 @@ compile1(syn::Fun) =
     x,y,z=implicitargs(syn.body)
     body = !isempty(syn.body) ?
       map(compile1, syn.body) :
-      [:($(Runtime.kself))]
+      [:($vself)]
     if z
-      :((x, y, z) -> $(body...))
+      :($(R.Fun)((x, y, z) -> $(body...), 3))
     elseif y
-      :((x, y) -> $(body...))
+      :($(R.DFun)((x, y) -> $(body...)))
     elseif x
-      :((x) -> $(body...))
+      :($(R.MFun)((x) -> $(body...)))
     else
-      :((_) -> $(body...))
+      :($(R.MFun)((x) -> $(body...)))
     end
   end
 compile1(syn::Lit) =
@@ -1661,7 +1693,7 @@ compile1(syn::Lit) =
 compile1(syn::Id) = :($(syn.v))
 compile1(syn::Seq) =
   compileargs(syn.body) do args
-    :($(Runtime.klist)($(args...)))
+    :($(R.klist)($(args...)))
   end
 compile1(syn::LSeq) =
   begin
@@ -1691,34 +1723,32 @@ compileapp(f, args, pargs) =
     f′ = gensym("f")
     expr = compileapp(f′, args)
     :(let $f′ = $f
-        if $f′ isa $(Runtime.KFunction)
-          ($(pargs...),) -> $expr
+        if $f′ isa $(R.KFun)
+          $(R.Fun)(($(pargs...),) -> $expr, $(length(pargs)))
         else
-          let $(map(arg -> :($arg = :), pargs)...)
+          let $(map(arg -> :($arg = :), pargs)...);
             $expr
           end
         end
       end)
   end
-compileapp(f::Runtime.KFunction, args, pargs) =
+compileapp(f::R.KFun, args, pargs) =
   isempty(pargs) ?
     compileapp(f, args) :
-    :(($(pargs...),) -> $(compileapp(f, args)))
+    :($(R.Fun)(($(pargs...),) ->
+      $(compileapp(f, args)), $(length(pargs))))
 compileapp(f, args) =
-  :($(Runtime.app)($(f), $(args...)))
-compileapp(f::Runtime.KFunction, args) =
+  :($(R.app)($(f), $(args...)))
+compileapp(f::R.KFun, args) =
   begin
-    f == Runtime.app && return :($(Runtime.app)($(f), $(args...)))
-    flen, alen = Runtime.arity(f), length(args)
+    f == R.app && return :($(R.app)($(f), $(args...)))
+    flen, alen = R.arity(f), length(args)
     if alen in flen
       :($f($(args...)))
-    elseif alen < first(flen)
-      if !any(a -> a isa Expr, args)
-        # PFunction application doesn't produce any side effects
-        Runtime.PFunction(f, tuple(args...), flen[1] - alen)
-      else
-        :($(Runtime.PFunction)($f, tuple($(args...)), $(flen[1] - alen)))
-      end
+    elseif alen < flen.start
+      !any(a -> a isa Expr, args) ?
+        R.app(f, args...) : # TODO: shouldn't have side-effects?
+        :($(R.app)($f, $(args...)))
     else
       @assert false "invalid arity"
     end
@@ -1726,7 +1756,7 @@ compileapp(f::Runtime.KFunction, args) =
 
 compilefun(syn) = compile1(syn)
 compilefun(syn::Train) =
-  :($(Runtime.Train)($(compile1(syn.head)), $(compile1(syn.next))))
+  :($(R.Train)($(compile1(syn.head)), $(compile1(syn.next))))
 compilefun(syn::Verb) =
   begin
     f = get(verbs, syn.v, nothing)
@@ -1738,7 +1768,7 @@ compilefun(syn::Adverb) =
     adverb = get(adverbs, syn.v, nothing)
     @assert adverb !== nothing "adverb is not implemented: $(syn.v)"
     verb = compilefun(syn.arg)
-    if verb isa Runtime.KFunction
+    if verb isa R.KFun
       adverb(verb)
     else
       :($adverb($verb))

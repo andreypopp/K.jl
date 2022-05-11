@@ -157,7 +157,7 @@ arity 1, 2 or 3 correspondingly):
 Functions which mention no implicit argument (`x`, `y` or `z`) have arity 1:
 
     julia> k"{1+2}"
-    … (generic function with 1 method)
+    *mfunction*
 
     julia> k"{1+2}[42]"
     3

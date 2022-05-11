@@ -40,13 +40,47 @@ end
                            raw"(20>)(2*)/1"
                            raw"`a`b`c<`b"
                            raw"<0"
+                           raw"+\[*8>;,0;,1]"
+                           raw"+/[*8>;,0;,1]"
+                           raw"+\[8>;0;1]"
+                           raw"+/[8>;0;1]"
+                           raw"<':\"abcd\"!3 5 4 8"
+                           raw">-2 -1.5 -1"
+                           raw"<-2 -1.5 -1"
+                           raw">1 1.5 2"
+                           raw"<1 1.5 2"
+                           raw">(-2;-1.5;-1)"
+                           raw"<(-2;-1.5;-1)"
+                           raw">(1;1.5;2)"
+                           raw"<(1;1.5;2)"
                            # ?
                            raw"?/'(!0;0#0n)"
+                           # \:
+                           raw"(,/(+;-)@\:)[7 8;9 1]"
+                           raw"(%/(+/;#:)@\:)2 3 4 6"
                            # tables
                            raw"+\+`a`b!+(1 2;3 4;5 6)"
                            raw"t:+d:`a`b!2 3#!6;t,d"
+                           raw"t:+d:`a`b!2 3#!6;d,t"
+                           raw"t:+d:`a`b!2 3#!6;t,t"
+                           raw"(,`b)_+`a`b!2 3#!6"
+                           raw"(,`b)#+`a`b!2 3#!6"
+                           raw"+`a`b!0 1"
+                           raw"$(+``a!!1 1)!,2"
+                           raw"`a!`b!`c!1"
+                           raw",`a!`b!1"
+                           raw",`a`b!(0 1;2 3)"
+                           raw"`a!`b!1"
+                           raw",`a`b!(0 1;2)"
+                           raw"(+`a`b!(0 1;2 3))`b"
+                           raw",`a`b!0 1"
+                           raw"(+`a`b!(0 1;2 3))1"
+                           raw"(+`a`b!(0 1;2 3))2"
+                           raw"(`a`b!0 1;`a`b!2 3)"
                            # ??? ngn/k returns (0; -0.0)
                            raw"-/'(!0;0#0n)"
+                           # support 0N in # reshape
+                           raw"3 0N#!0"
                            # $[x;y;z]
                            raw"{$[x=1;1;2!x;1+3*x;-2!x]}/17"
                            raw"{$[x=1;1;2!x;1+3*x;-2!x]}\17"
@@ -61,20 +95,48 @@ end
                            raw"{(x;y;z)}\[1;2 3 4;5 6 7]"
                            # multi decode
                            raw"2/(1 1 0;0 1 0;1 0 1)"
-                           # reassignment
+                           # d' is not supported
+                           raw"(\"abc\"!1 3 5)'0 2"
+                           # assignment forms
+                           raw"{(a;b):2 3;a-b}0"
                            raw"a.b:!2;{a.b,:x}2;a.b"
+                           raw"a:()!0;a[\"bc\"]:1;a\"bc\""
+                           raw"(a;b):3 4;{(c;d):!2;d+b}0"
+                           raw"{-x,:x}@,!2"
+                           raw"a+:a:!2;a"
                            # not supported
                            raw"(`?`@{1+2*x})3"
+                           # progn
+                           raw"+/[-3;0;1]"
+                           # unicode
+                           raw"(∘):+;1∘2"
+                           # system
+                           raw"s:`prng[];a:9?0;`prng s;a~9?0"
+                           # structural function equality
+                           raw"({z}1)2"
+                           raw"{f:+';f[1 2]}0"
+                           raw"+[2;]"
+                           raw"1 2#'"
+                           raw"#[1 2;]"
+                           raw"#'[1 2;]"
+                           # func args
+                           raw"{[a;b;c;d;e;f;g] 3}.!7"
+                           ## DIVERGE
+                           # here we keep LTR order within (..)
+                           raw"a:0;(a;a:1;a)"
                           ])
   @testset "eval" begin
-    for (t, e) in cases
+    for (n, (t, e)) in enumerate(cases[end-300:end])
       skipped = t in eval_skip ||
                 startswith(t, "`?") ||
                 startswith(t, "`j") ||
+                startswith(t, "`hex") ||
                 startswith(t, "`k") ||
+                startswith(t, "?[") || # splice
+                startswith(t, ".[") || # try/catch
                 startswith(t, "`0")
       if !skipped
-        @info "$t -> $e"
+        @info "$n: $t -> $e"
       end
       @test begin
         K.Runtime.isequal(k(t, Main), k(e, Main))
