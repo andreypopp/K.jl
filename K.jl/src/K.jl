@@ -462,25 +462,25 @@ Arity = UnitRange{Int64} # TODO: Int8
 
 KFun = Union{Function,AFun}
 
-struct Fun <: AFun
-  f::KFun
+struct Fun{F<:KFun} <: AFun
+  f::F
   arity::Arity
-  Fun(f::KFun, arity::Arity) = new(f, arity)
-  Fun(f::KFun, arity::Int64) = new(f, arity:arity)
+  Fun(f::KFun, arity::Arity) = new{typeof(f)}(f, arity)
+  Fun(f::KFun, arity::Int64) = new{typeof(f)}(f, arity:arity)
 end
 (s::Fun)(args...) = s.f(args...)
 arity(f::Fun)::Arity = f.arity
 Base.promote_op(f::Fun, S::Type...) = Base.promote_op(f.f, S...)
 Base.show(io::IO, s::Fun) = print(io, "*$(s.arity)-function*")
 
-struct MFun <: AFun f::KFun end
+struct MFun{F<:KFun} <: AFun f::F end
 (s::MFun)(x) = s.f(x)
 arity(f::MFun)::Arity = 1:1
 Base.promote_op(f::MFun, S::Type...) = Base.promote_op(f.f, S...)
 Base.show(io::IO, s::MFun) = print(io, "*mfunction*")
 
-struct DFun <: AFun f::KFun end
-(s::DFun)(x, y) = s.f(x, y)
+struct DFun{F<:KFun} <: AFun f::F end
+@inline (s::DFun)(x, y) = s.f(x, y)
 arity(f::DFun)::Arity = 2:2
 Base.promote_op(f::DFun, S::Type...) = Base.promote_op(f.f, S...)
 Base.show(io::IO, s::DFun) = print(io, "*dfunction*")
@@ -498,7 +498,7 @@ struct PFun <: AFun
   PFun(f::PFun, args, narr) =
     new(f.f, (f.args..., args...), narr)
 end
-(s::PFun)(args...) = s.f(s.args..., args...)
+@inline (s::PFun)(args...) = s.f(s.args..., args...)
 arity(f::PFun)::Arity = f.arity:f.arity
 Base.show(io::IO, s::PFun) = print(io, "*$(s.arity)-pfunction*")
 Base.promote_op(f::PFun, S::Type...) =
@@ -692,8 +692,8 @@ macro papp(f, args)
 end
 
 app(o::MFun, x) = o.f(x)
-app(o::DFun, x) = PFun(o.f, (x,), 1)
-app(o::DFun, x, y) = o.f(x, y)
+@inline app(o::DFun, x) = PFun(o.f, (x,), 1)
+@inline app(o::DFun, x, y) = o.f(x, y)
 app(o::AppFun, f, args...) = @papp(f, args)
 (o::AppFun)(f, args...) = @papp(f, args)
 app(@nospecialize(f::KFun), args...) = @papp(f, args)
@@ -1744,7 +1744,9 @@ compileapp(f::R.KFun, args) =
     f == R.app && return :($(R.app)($(f), $(args...)))
     flen, alen = R.arity(f), length(args)
     if alen in flen
-      :($f($(args...)))
+      f isa Union{R.MFun,R.DFun,R.Fun} ?
+        :($(f.f)($(args...))) :
+        :($f($(args...)))
     elseif alen < flen.start
       !any(a -> a isa Expr, args) ?
         R.app(f, args...) : # TODO: shouldn't have side-effects?
