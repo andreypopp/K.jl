@@ -1,3 +1,6 @@
 [submodule "NarrativeTest.jl"]
 	path = NarrativeTest.jl
 	url = git@github.com:andreypopp/NarrativeTest.jl.git
+[submodule "k"]
+	path = k
+	url = https://codeberg.org/ngn/k.git
