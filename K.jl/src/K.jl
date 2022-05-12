@@ -1433,8 +1433,8 @@ kreshape(x::Int64, y::Vector) =
   begin
     x == 0 && return empty(y)
     x == Null.int_null && return y
-    it, len = x>0 ? (y, x) : (Iterators.reverse(y), -x)
-    collect(Iterators.take(Iterators.cycle(it), len))
+    y = x < 0 ? Iterators.drop(y, length(y) + x) : y
+    collect(Iterators.take(Iterators.cycle(y), abs(x)))
   end
 
 # I#y reshape
