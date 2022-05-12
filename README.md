@@ -2,38 +2,41 @@
 
 **WARNING: EXPERIMENTAL, DO NOT USE**
 
-[K programming language][K] dialect embedded in [Julia][].
+[K programming language][K] dialect embedded in [Julia][], inspired by
+[ngn/k][].
 
-There are multiple incompatible version of K, K.jl is inspired by [ngn/k][]
-which in turn cites K6 as inspiration.
+## Installation
 
-## Installation & Usage
+The package is not registered and therefore requires cloning the repo with
+development environment:
 
-Start Julia interpreter:
+    git clone https://github.com/andreypopp/K.jl
+    cd K.jl
+    julia
 
-    $ julia
-
-and install `K.jl` from github:
+Then:
 
     julia> using Pkg
-    julia> Pkg.install("https://github.com/andreypopp/K.jl
+    julia> Pkg.instantiate()
 
-Now you can start using K.jl:
+## Usage
+
+Start `julia` and:
 
     julia> using K
 
     julia> k"+/1 2 3 4"
     10
 
-There's REPL mode available which is enabled by default in REPL, press `\` key
-to activate it:
+The K REPL can be entered via `\` key:
 
       +/1 2 3 4
     10
 
 ## Status & Roadmap
 
-Current K.jl is incomplete, some chunks of the K are not implemented.
+Current K.jl is incomplete, any help would be very much appreciated - open
+issues, pull requests.
 
 [Julia]: https://julialang.org
 [K]: https://en.wikipedia.org/wiki/K_(programming_language)
