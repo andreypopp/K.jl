@@ -474,7 +474,7 @@ Base.promote_op(f::Fun, S::Type...) = Base.promote_op(f.f, S...)
 Base.show(io::IO, s::Fun) = print(io, "*$(s.arity)-function*")
 
 struct MFun{F<:KFun} <: AFun f::F end
-(s::MFun)(x) = s.f(x)
+@inline (s::MFun)(x) = s.f(x)
 arity(f::MFun)::Arity = 1:1
 Base.promote_op(f::MFun, S::Type...) = Base.promote_op(f.f, S...)
 Base.show(io::IO, s::MFun) = print(io, "*mfunction*")
@@ -488,6 +488,9 @@ Base.show(io::IO, s::DFun) = print(io, "*dfunction*")
 struct AppFun <: AFun end
 arity(o::AppFun) = 2:8
 Base.show(io::IO, s::AppFun) = print(io, "*app*")
+Base.promote_op(::AppFun, V::Type{<:Vector}, I::Type{Vector}) =
+  Base.promote_op(app, V, S)
+Base.promote_op(::AppFun, F, S::Type) = Base.promote_op(F, S...)
 
 struct PFun <: AFun
   f::KFun
@@ -608,6 +611,20 @@ isequal(x::AbstractDict{K,V}, y::AbstractDict{K,V}) where {K,V} =
     end
     return true
   end
+  
+isless(x, y) = x < y
+isless(x::Char, y::Char) = isless(Int(x), Int(y))
+isless(x::Char, y) = isless(Int(x), y)
+isless(x, y::Char) = isless(x, Int(y))
+isless(x::Vector, y) = true
+isless(x, y::Vector) = false
+isless(x::Vector, y::Vector) =
+  begin
+    for (xe, ye) in zip(x, y)
+      isequal(xe, ye) ? continue : return isless(xe, ye)
+    end
+    return length(x) < length(y)
+  end
 
 # K dicts
 
@@ -621,7 +638,6 @@ import Base: <, <=, ==, convert, length, isempty, iterate, delete!,
                  first, last, eltype, getkey, values, sum,
                  merge, merge!, lt, Ordering, ForwardOrdering, Forward,
                  ReverseOrdering, Reverse, Lt,
-                 isless,
                  union, intersect, symdiff, setdiff, setdiff!, issubset,
                  searchsortedfirst, searchsortedlast, in,
                  filter, filter!, ValueIterator, eachindex, keytype,
@@ -710,7 +726,10 @@ app(o::MFun, x) = o.f(x)
 @inline app(o::DFun, x) = P1Fun(o.f, x, 1)
 @inline app(o::DFun, x, y) = o.f(x, y)
 app(o::AppFun, f, args...) = @papp(f, args)
+@inline app(o::AppFun, f::Vector, args...) = app(f, args...)
 (o::AppFun)(f, args...) = @papp(f, args)
+(o::AppFun)(f::Vector, args...) = app(f, args...)
+(o::AppFun)(f::Vector{T}, v::Vector{I}) where {T,I} = app(f, v)
 app(@nospecialize(f::KFun), args...) = @papp(f, args)
 
 app(x::Vector, is...) =
@@ -723,12 +742,15 @@ app(x::Vector, is...) =
       app(app(x, i), is...)
   end
 app(x::Vector, ::Colon) = x
-app(x::Vector, i::Int64) =
+app(x::Vector, is::Vector) = app.(Ref(x), is)
+(app(x::Vector{T}, i::Int64)::T) where {T} =
   (v = get(x, i + 1, nothing); v === nothing ? outdex(x) : v)
-app(x::Vector, is::Vector) =
+(app(x::Vector{T}, is::Vector{Int64})::Vector{T}) where {T} =
   app.(Ref(x), is)
 app(x::Vector, is::AbstractDict) =
   OrderedDict(zip(keys(is), app(x, collect(values(is)))))
+Base.promote_op(app, T::Type{<:Vector}, I::Type{<:Vector}) = T
+Base.promote_op(app, T::Type{<:Vector}, I::Type{Int64}) = eltype(T)
 
 app(x::AbstractDict, is...) =
   begin
@@ -1303,6 +1325,24 @@ kor(x, y) = max(x, y)
 @dyad4vector(kor)
 @dyad4dict(kor)
 
+# N<N less
+kless(x::Union{Int64,Float64}, y::Union{Int64,Float64}) = Int(x < y)
+@dyad4char(kless)
+@dyad4vector(kless)
+@dyad4dict(kless)
+
+# N>N more
+kmore(x::Union{Int64,Float64}, y::Union{Int64,Float64}) = Int(x > y)
+@dyad4char(kmore)
+@dyad4vector(kmore)
+@dyad4dict(kmore)
+
+# <X asc
+kasc(x::Vector) = sortperm(x, lt=isless) .- 1
+
+# >X desc
+kdesc(x::Vector) = sortperm(x, lt=isless, rev=true) .- 1
+
 # ~x not
 knot(x::Float64) = Int(x == 0.0)
 knot(x::Int64) = Int(x == 0.0)
@@ -1602,6 +1642,10 @@ verbs = Dict(
              Symbol(raw"&")  => R.DFun(R.kand),
              Symbol(raw"|:") => R.MFun(R.krev),
              Symbol(raw"|")  => R.DFun(R.kor),
+             Symbol(raw"<:") => R.MFun(R.kasc),
+             Symbol(raw"<")  => R.DFun(R.kless),
+             Symbol(raw">:") => R.MFun(R.kdesc),
+             Symbol(raw">")  => R.DFun(R.kmore),
              Symbol(raw"~:") => R.MFun(R.knot),
              Symbol(raw"~")  => R.DFun(R.kmatch),
              Symbol(raw"=:") => R.MFun(R.kgroup),
