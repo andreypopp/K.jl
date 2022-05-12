@@ -10,12 +10,9 @@
 The package is not registered and therefore requires cloning the repo with
 development environment:
 
-    git clone https://github.com/andreypopp/K.jl
-    cd K.jl
-    julia
-
-Then:
-
+    $ git clone --recursive https://github.com/andreypopp/K.jl
+    $ cd K.jl
+    $ julia
     julia> using Pkg
     julia> Pkg.instantiate()
 
