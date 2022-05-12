@@ -556,35 +556,38 @@ replicate(v, n) =
 tryidentity(@nospecialize(f), T::Type, @nospecialize(d)) =
   T != Any && hasmethod(f, (Type{T},)) ? f(T) : d
 
-identity(f) =
-  if f === kadd; 0
-  elseif f === ksub; 0
-  elseif f === kmul; 1
-  elseif f === kdiv; 1
-  elseif f === kand; typemax(Int64)
-  elseif f === kor; typemin(Int64) + 1
-  elseif f === kconcat; Any[]
+identity(f) = nothing
+identity(f::DFun) =
+      if f.f === kadd; 0
+  elseif f.f === ksub; 0
+  elseif f.f === kmul; 1
+  elseif f.f === kdiv; 1
+  elseif f.f === kand; typemax(Int64)
+  elseif f.f === kor; typemin(Int64) + 1
+  elseif f.f === kconcat; Any[]
   else; nothing
   end
-identity(f, T::Type) =
-  if f === kadd; tryidentity(zero, T, 0)
-  elseif f === ksub; tryidentity(zero, T, 0)
-  elseif f === kmul; tryidentity(one, T, 1)
-  elseif f === kdiv; tryidentity(one, T, 1)
-  elseif f === kand; tryidentity(typemax, T, identity(f))
-  elseif f === kor
+identity(f, T::Type) = nothing
+identity(f::DFun, T::Type) =
+      if f.f === kadd; tryidentity(zero, T, 0)
+  elseif f.f === ksub; tryidentity(zero, T, 0)
+  elseif f.f === kmul; tryidentity(one, T, 1)
+  elseif f.f === kdiv; tryidentity(one, T, 1)
+  elseif f.f === kand; tryidentity(typemax, T, identity(f))
+  elseif f.f === kor
     hasmethod(one, (T,)) ? typemin(T) + one(T) : identity(f)
-  elseif f === kconcat; T <: Vector ? eltype(T)[] : T[]
+  elseif f.f === kconcat; T <: Vector ? eltype(T)[] : T[]
   else; nothing
   end
-scanidentity(f, T::Type) =
-  if f === kadd; tryidentity(zero, T, 0)
-  elseif f === ksub; nothing
-  elseif f === kmul; nothing
-  elseif f === kdiv; nothing
-  elseif f === kand; nothing
-  elseif f === kor; nothing
-  elseif f === kconcat; T <: Vector ? eltype(T)[] : T[]
+lidentity(f, T::Type) = nothing
+lidentity(f::DFun, T::Type) =
+      if f.f === kadd; tryidentity(zero, T, 0)
+  elseif f.f === ksub; nothing
+  elseif f.f === kmul; nothing
+  elseif f.f === kdiv; nothing
+  elseif f.f === kand; nothing
+  elseif f.f === kor; nothing
+  elseif f.f === kconcat; T <: Vector ? eltype(T)[] : T[]
   else; nothing
   end
 
@@ -855,7 +858,7 @@ macro dyad4dict(f, V=nothing)
         end
         x = OrderedDict{K,V}(x)
         for (k, v) in y
-          x[k] = $f(haskey(x, k) ? x[k] : identity($f), v)
+          x[k] = $f(haskey(x, k) ? x[k] : identity(DFun($f), V), v)
         end
         x
       end
@@ -1008,7 +1011,7 @@ arity(::Encode)::Arity = 1:1
   begin
     isempty(x) ? x : begin
       ET, len = eltype(x), length(x)
-      id = scanidentity(o.f, isempty(x) ? eltype(x) : typeof(x[1]))
+      id = lidentity(o.f, isempty(x) ? eltype(x) : typeof(x[1]))
       if id === nothing
         T = promote_type(Base.promote_op(o.f, ET, ET), ET)
         r = Vector{T}(undef, len)
@@ -1329,6 +1332,7 @@ kor(x, y) = max(x, y)
 
 # N<N less
 kless(x::Union{Int64,Float64}, y::Union{Int64,Float64}) = Int(x < y)
+kless(x::Symbol, y::Symbol) = Int(x < y)
 @dyad4char(kless)
 @dyad4vector(kless)
 @dyad4dict(kless)

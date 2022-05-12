@@ -73,7 +73,7 @@
     Int64[]
     
     julia> k""" ^() """
-    Any[]
+    Int64[]
 
 `^d` distributes `^` along `d` values:
 
