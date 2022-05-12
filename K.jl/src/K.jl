@@ -912,7 +912,7 @@ arity(::Decode)::Arity = 1:1
 # f f/ while
 (o::FoldM)(x::KFun, y) =
   begin
-    while Bool(x(y))
+    while x(y)!=0
       y = o.f(y)
     end
     y
@@ -957,6 +957,8 @@ arity(::Decode)::Arity = 1:1
     end
     r
   end
+# I/ decode
+(o::Decode)(x::Number) = decode1(o.b, [x])
 (o::Decode)(x::Vector{<:Number}) = decode1(o.b, x)
 
 decode1(b::Int64, x::Vector{<:Number}) =
@@ -1045,7 +1047,7 @@ arity(::Encode)::Arity = 1:1
   begin
     T = promote_type(Base.promote_op(o.f, typeof(y)), typeof(y))
     r = T[y]
-    while Bool(x(y))
+    while x(y)!=0
       y = o.f(y)
       push!(r, y)
     end
@@ -1306,7 +1308,7 @@ kmod(x::Vector, y::Vector) =
 
 # &I where
 kwhere(x::Int64) = fill(0, x)
-kwhere(x::Vector{Int64}) = replicate(0:length(x)-1, x)
+kwhere(x::Vector{Int64}) = isempty(x) ? x : replicate(0:length(x)-1, x)
 
 # N&N min/and
 kand(x, y) = min(x, y)
@@ -1404,7 +1406,7 @@ klist(x...) = Any[x...]
 # ^x null
 knull(x) = 0
 knull(x::KAtom) = Int(Null.isnull(x))
-knull(x::Vector) = knull.(x)
+knull(x::Vector) = isempty(x) ? Int64[] : knull.(x)
 @monad4dict(knull)
 
 # a^y fill
@@ -1508,6 +1510,7 @@ kdrop(x::Vector, y::AbstractDict) =
 kdrop(x::Vector{Int64}, y::Vector) =
   begin
     o = Vector{eltype(y)}[]
+    isempty(x) && return o
     len = length(y)
     previ = -1
     for i in x
