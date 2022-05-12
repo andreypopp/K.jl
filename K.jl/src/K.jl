@@ -504,6 +504,18 @@ Base.show(io::IO, s::PFun) = print(io, "*$(s.arity)-pfunction*")
 Base.promote_op(f::PFun, S::Type...) =
   Base.promote_op(f.f, map(typeof, f.args)..., S...)
 
+struct P1Fun{F<:KFun,X} <: AFun
+  f::F
+  arg::X
+  arity::Int64
+end
+(o::P1Fun)(x) = o.f(o.arg, x)
+@inline (o::P1Fun)(x, args...) = o.f(o.arg, x, args...)
+arity(o::P1Fun)::Arity = o.arity:o.arity
+Base.show(io::IO, s::P1Fun) = print(io, "*$(s.arity)-pfunction*")
+Base.promote_op(o::P1Fun, S::Type...) =
+  Base.promote_op(o.f, typeof(o.arg), S...)
+
 # TODO: make it work?
 # arity(f::Function)::Arity =
 #   begin
@@ -686,13 +698,16 @@ macro papp(f, args)
   quote
     flen, alen = arity($f), length($args)
     if alen in flen; $f($args...)
-    elseif alen < flen.start; PFun($f, $args, flen[1] - alen)
+    elseif alen < flen.start
+      alen == 1 ?
+        P1Fun($f, $args[1], flen[1] - alen) :
+        PFun($f, $args, flen[1] - alen)
     else; @assert false "arity error" end
   end
 end
 
 app(o::MFun, x) = o.f(x)
-@inline app(o::DFun, x) = PFun(o.f, (x,), 1)
+@inline app(o::DFun, x) = P1Fun(o.f, x, 1)
 @inline app(o::DFun, x, y) = o.f(x, y)
 app(o::AppFun, f, args...) = @papp(f, args)
 (o::AppFun)(f, args...) = @papp(f, args)
@@ -1705,13 +1720,14 @@ compile1(syn::LSeq) =
 compile1(syn::LBind) = compile1(App(syn.v, syn.arg))
 compile1(syn::Union{Verb,Adverb,Train}) = :($(compilefun(syn)))
 
-compileargs(f, args::Vector{Syn}) =
+compileargs(f, args::Vector) =
   begin
     bindings = []
     args′ = []
     for arg in args
+      arg = arg isa Syn ? compile1(arg) : arg
       sym = gensym("arg")
-      push!(bindings, :($sym = $(compile1(arg));))
+      push!(bindings, :($sym = $arg;))
       push!(args′, sym)
     end
     :(begin; $(bindings...); $(f(args′)) end)
@@ -1738,21 +1754,20 @@ compileapp(f::R.KFun, args, pargs) =
     :($(R.Fun)(($(pargs...),) ->
       $(compileapp(f, args)), $(length(pargs))))
 compileapp(f, args) =
-  :($(R.app)($(f), $(args...)))
+  compileargs(args) do args
+    :($(R.app)($(f), $(args...)))
+  end
 compileapp(f::R.KFun, args) =
   begin
-    f == R.app && return :($(R.app)($(f), $(args...)))
     flen, alen = R.arity(f), length(args)
-    if alen in flen
-      f isa Union{R.MFun,R.DFun,R.Fun} ?
-        :($(f.f)($(args...))) :
-        :($f($(args...)))
-    elseif alen < flen.start
-      !any(a -> a isa Expr, args) ?
-        R.app(f, args...) : # TODO: shouldn't have side-effects?
-        :($(R.app)($f, $(args...)))
+    if alen < flen.start && !any(a -> a isa Union{Expr,Symbol}, args)
+      R.app(f, args...)
     else
-      @assert false "invalid arity"
+      compileargs(args) do args
+        alen in flen ? :($f($(args...))) :
+        alen < flen.start ? :($(R.app)($f, $(args...))) :
+        @assert false "invalid arity"
+      end
     end
   end
 
