@@ -717,15 +717,17 @@ outdex(x::AbstractDict) =
 
 # application
 
+@inline papp(f, args, flen, alen) =
+  alen == 1 ?
+    P1Fun(f, args[1], flen[1] - alen) :
+    PFun(f, args, flen[1] - alen)
+
 macro papp(f, args)
   f, args = esc(f), esc(args)
   quote
     flen, alen = arity($f), length($args)
     if alen in flen; $f($args...)
-    elseif alen < flen.start
-      alen == 1 ?
-        P1Fun($f, $args[1], flen[1] - alen) :
-        PFun($f, $args, flen[1] - alen)
+    elseif alen < flen.start; papp($f, $args, flen, alen)
     else; @assert false "arity error" end
   end
 end
@@ -1786,7 +1788,7 @@ compile1(syn::App) =
       :(return $rhs)
     elseif f isa Union{Verb,Adverb}
       # @assert length(args) in (1, 2)
-      f = compilefun(f)
+      f = compile1(f)
       compileapp(f, args, pargs)
     elseif f isa Fun
       f = compile1(f)
@@ -1833,7 +1835,13 @@ compile1(syn::LSeq) =
       foldl(promote_type, map(e -> typeof(e.v), syn.body))
     :($T[$(map(compile1, syn.body)...)])
   end
-compile1(syn::LBind) = compile1(App(syn.v, syn.arg))
+compile1(syn::LBind) =
+  begin
+    f, a = compile1(syn.v), compile1(syn.arg)
+    f isa R.KFun && !(a isa Union{Expr,Symbol}) ?
+      R.papp(f, a, 2:2, 1) :
+      :($(R.papp)($f, $a, 2:2, 1))
+  end
 compile1(syn::Union{Verb,Adverb,Train}) = :($(compilefun(syn)))
 
 compileargs(f, args::Vector) =
