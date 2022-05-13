@@ -64,8 +64,6 @@ appreciated, list of incomplete items include:
   - [ ] `   I\ encode` missing impl for higher rank arrays
   - [ ] `  i': window`
   - [ ] `i f': stencil`
-  - [ ] `  F': eachprior`
-  - [ ] `x F': seeded ':`
 - [ ] tables
 - [ ] pretty printer / value string representation
 
