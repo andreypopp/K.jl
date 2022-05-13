@@ -719,8 +719,8 @@ outdex(x::AbstractDict) =
 
 @inline papp(f, args, flen, alen) =
   alen == 1 ?
-    P1Fun(f, args[1], flen[1] - alen) :
-    PFun(f, args, flen[1] - alen)
+    P1Fun(f, args[1], flen.start - alen) :
+    PFun(f, args, flen.start - alen)
 
 macro papp(f, args)
   f, args = esc(f), esc(args)
@@ -759,8 +759,8 @@ app(x::Vector, is::Vector) = app.(Ref(x), is)
   app.(Ref(x), is)
 app(x::Vector, is::AbstractDict) =
   OrderedDict(zip(keys(is), app(x, collect(values(is)))))
-Base.promote_op(app, T::Type{<:Vector}, I::Type{<:Vector}) = T
-Base.promote_op(app, T::Type{<:Vector}, I::Type{Int64}) = eltype(T)
+Base.promote_op(::typeof(app), T::Type{<:Vector}, I::Type{<:Vector}) = T
+Base.promote_op(::typeof(app), T::Type{<:Vector}, I::Type{Int64}) = eltype(T)
 
 app(x::AbstractDict, is...) =
   begin
