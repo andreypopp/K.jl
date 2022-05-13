@@ -66,8 +66,6 @@ appreciated, list of incomplete items include:
   - [ ] `i f': stencil`
   - [ ] `  F': eachprior`
   - [ ] `x F': seeded ':`
-  - [ ] `x F/: eachright`
-  - [ ] `x F\: eachleft`
 - [ ] tables
 - [ ] pretty printer / value string representation
 

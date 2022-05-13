@@ -1196,6 +1196,27 @@ keach′(f, x::Vector) =
 keach′(f, d::AbstractDict) =
   OrderedDict(zip(keys(d), map(f, values(d))))
 
+# eachright/eachleft
+
+@adverb EachR 2:2
+@adverb EachL 2:2
+
+# x F/: y eachright
+(o::EachR)(x, y) = app(o.f, x, y)
+(o::EachR)(x, y::Vector) = isempty(y) ? y : [app(o.f, x, ye) for ye in y]
+(o::EachR)(x, y::AbstractDict) =
+  isempty(y) ? y :
+    OrderedDict(zip(keys(y), [app(o.f, x, ye) for ye in values(y)]))
+# x F\: y eachleft
+(o::EachL)(x, y) = app(o.f, x, y)
+(o::EachL)(x::Vector, y) = isempty(x) ? x : [app(o.f, xe, y) for xe in x]
+(o::EachL)(x::AbstractDict, y) =
+  isempty(x) ? x :
+    OrderedDict(zip(keys(x), [app(o.f, xe, y) for xe in values(x)]))
+
+keachright(f) = EachR(f)
+keachleft(f) = EachL(f)
+
 # verbs
 
 # :: x
@@ -1680,6 +1701,8 @@ adverbs = Dict(
                Symbol(raw"/")  => R.kfold,
                Symbol(raw"\\") => R.kscan,
                Symbol(raw"'")  => R.keach,
+               Symbol(raw"/:") => R.keachright,
+               Symbol(raw"\:") => R.keachleft,
               )
 
 compile(str::String) = compile(Parse.parse(str))
