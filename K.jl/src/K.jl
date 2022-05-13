@@ -1218,22 +1218,45 @@ keach′(f, d::AbstractDict) =
 keachright(f) = EachR(f)
 keachleft(f) = EachL(f)
 
-# eachprior
+# eachprior / windows / stencil
 
 @adverb EachP 1:2
+@adverb Stencil 2:2
 
-#   F': x
+struct Windows <: AFun; i::Int64 end
+arity(::Windows)::Arity = 1:1
+
+#   F': x   eachprior
 (o::EachP)(x::Vector) =
   isempty(x) ? x :
     @inbounds [i == 1 ? x[1] : o.f(x[i], x[i-1]) for i in 1:length(x)]
 (o::EachP)(x::AbstractDict) = mapvalues(o, x)
-# s F': x
+# s F': x   seeded eachprior
 (o::EachP)(s, x::Vector) =
   isempty(x) ? x :
     @inbounds [o.f(x[i], i == 1 ? s : x[i-1]) for i in 1:length(x)]
 (o::EachP)(s, x::AbstractDict) = mapvalues(o, s, x)
+# i': x     windows
+(o::Windows)(x::Vector) = kwindows(o.i, x)
+# i f': x   stencil
+(o::Stencil)(i::Int64, x::Vector) = o.f.(kwindows(i, x))
 
-keachprior(f) = EachP(f)
+kwindows(n::Int64, x::Vector) =
+  isempty(x) ? x : begin
+    len = length(x) - n + 1
+    r = Vector{typeof(x)}(undef, len)
+    for i in 1:len
+      w = similar(x, n)
+      for j in 0:n-1
+        w[j+1] = x[i+j]
+      end
+      r[i] = w
+    end
+    r
+  end
+
+keachprior(f) = arity(f).start == 1 ? Stencil(f) : EachP(f)
+keachprior(f::Int64) = Windows(f)
 
 # verbs
 

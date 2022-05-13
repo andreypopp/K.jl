@@ -62,8 +62,6 @@ appreciated, list of incomplete items include:
   - [ ] `   X' binsearch`
   - [ ] `   I/ decode` missing impl for higher rank arrays
   - [ ] `   I\ encode` missing impl for higher rank arrays
-  - [ ] `  i': window`
-  - [ ] `i f': stencil`
 - [ ] tables
 - [ ] pretty printer / value string representation
 
