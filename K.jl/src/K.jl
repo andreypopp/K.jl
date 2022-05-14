@@ -1839,8 +1839,8 @@ compile1(syn::LBind) =
   begin
     f, a = compile1(syn.v), compile1(syn.arg)
     f isa R.KFun && !(a isa Union{Expr,Symbol}) ?
-      R.papp(f, a, 2:2, 1) :
-      :($(R.papp)($f, $a, 2:2, 1))
+      R.papp(f, [a], 2:2, 1) :
+      :($(R.papp)($f, [$a], 2:2, 1))
   end
 compile1(syn::Union{Verb,Adverb,Train}) = :($(compilefun(syn)))
 
