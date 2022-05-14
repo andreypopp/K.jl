@@ -6,7 +6,7 @@ In K if you pass less arguments to a function than it accepts then a function
 projection is constructed:
 
     julia> k"{x+y}[1]"
-    *1-pfunction*
+    *1:1-pfunction*
 
 One can think of a projection as a function which remembers the original
 function and a number of arguments fixed at the moment of its construction.
@@ -31,7 +31,7 @@ It is an error to call a projection with more arguments than required:
 For functions with arity >2 we can project by passing several arguments at once:
 
     julia> k"{x,y,z}[1;2]"
-    *1-pfunction*
+    *1:1-pfunction*
 
     julia> k"{x,y,z}[1;2][3]"
     3-element Vector{Int64}:
@@ -48,10 +48,10 @@ For functions with arity >2 we can project by passing several arguments at once:
 Projecting a projection constructs another projection:
 
     julia> k"{x,y,z}[1]"
-    *2-pfunction*
+    *2:2-pfunction*
 
     julia> k"{x,y,z}[1][2]"
-    *1-pfunction*
+    *1:1-pfunction*
 
     julia> k"{x,y,z}[1][2][3]"
     3-element Vector{Int64}:
@@ -63,10 +63,10 @@ Note that we've used `f[..]` syntax to project but that's not necessary. Below
 are examples of projecting a function using juxtaposition:
 
     julia> k"{x,y,z}1"
-    *2-pfunction*
+    *2:2-pfunction*
 
     julia> k"({x,y,z}1)2"
-    *1-pfunction*
+    *1:1-pfunction*
 
     julia> k"(({x,y,z}1)2)3"
     3-element Vector{Int64}:

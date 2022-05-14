@@ -462,6 +462,15 @@ Arity = UnitRange{Int64} # TODO: Int8
 
 KFun = Union{Function,AFun}
 
+macro iterable1(name)
+  N = esc(name)
+  quote
+    Base.length(::$N) = 1
+    Base.iterate(f::$N) = (f, nothing)
+    Base.iterate(f::$N, ::Nothing) = nothing
+  end
+end
+
 struct Fun{F<:KFun} <: AFun
   f::F
   arity::Arity
@@ -472,18 +481,21 @@ end
 arity(f::Fun)::Arity = f.arity
 Base.promote_op(f::Fun, S::Type...) = Base.promote_op(f.f, S...)
 Base.show(io::IO, s::Fun) = print(io, "*$(s.arity)-function*")
+@iterable1 Fun
 
 struct MFun{F<:KFun} <: AFun f::F end
 @inline (s::MFun)(x) = s.f(x)
 arity(f::MFun)::Arity = 1:1
 Base.promote_op(f::MFun, S::Type...) = Base.promote_op(f.f, S...)
 Base.show(io::IO, s::MFun) = print(io, "*mfunction*")
+@iterable1 MFun
 
 struct DFun{F<:KFun} <: AFun f::F end
 @inline (s::DFun)(x, y) = s.f(x, y)
 arity(f::DFun)::Arity = 2:2
 Base.promote_op(f::DFun, S::Type...) = Base.promote_op(f.f, S...)
 Base.show(io::IO, s::DFun) = print(io, "*dfunction*")
+@iterable1 DFun
 
 struct AppFun <: AFun end
 arity(o::AppFun) = 2:8
@@ -491,33 +503,36 @@ Base.show(io::IO, s::AppFun) = print(io, "*app*")
 Base.promote_op(::AppFun, V::Type{<:Vector}, I::Type{Vector}) =
   Base.promote_op(app, V, S)
 Base.promote_op(::AppFun, F, S::Type) = Base.promote_op(F, S...)
+@iterable1 AppFun
 
 struct PFun <: AFun
   f::KFun
   args::Tuple
-  arity::Int64
-  PFun(f, args, narr) =
-    new(f, args, narr)
+  arity::Arity
+  PFun(f, args, arr) =
+    new(f, args, arr)
   PFun(f::PFun, args, narr) =
-    new(f.f, (f.args..., args...), narr)
+    new(f.f, (f.args..., args...), arr)
 end
 @inline (s::PFun)(args...) = s.f(s.args..., args...)
-arity(f::PFun)::Arity = f.arity:f.arity
+arity(f::PFun)::Arity = f.arity
 Base.show(io::IO, s::PFun) = print(io, "*$(s.arity)-pfunction*")
 Base.promote_op(f::PFun, S::Type...) =
   Base.promote_op(f.f, map(typeof, f.args)..., S...)
+@iterable1 PFun
 
 struct P1Fun{F<:KFun,X} <: AFun
   f::F
   arg::X
-  arity::Int64
+  arity::Arity
 end
 (o::P1Fun)(x) = o.f(o.arg, x)
 @inline (o::P1Fun)(x, args...) = o.f(o.arg, x, args...)
-arity(o::P1Fun)::Arity = o.arity:o.arity
+arity(o::P1Fun)::Arity = o.arity
 Base.show(io::IO, s::P1Fun) = print(io, "*$(s.arity)-pfunction*")
 Base.promote_op(o::P1Fun, S::Type...) =
   Base.promote_op(o.f, typeof(o.arg), S...)
+@iterable1 P1Fun
 
 # TODO: make it work?
 # arity(f::Function)::Arity =
@@ -651,8 +666,6 @@ include("ordered_dict.jl")
 
 @inline mapvalues(f, x::AbstractDict) =
   OrderedDict(zip(keys(x), f(collect(values(x)))))
-@inline mapvalues(f, x, y::AbstractDict) =
-  OrderedDict(zip(keys(y), f(x, collect(values(y)))))
 
 isequal(x::OrderedDict{K,V}, y::OrderedDict{K,V}) where {K,V} =
   begin
@@ -717,10 +730,19 @@ outdex(x::AbstractDict) =
 
 # application
 
-@inline papp(f, args, flen, alen) =
+papp(f, args, flen, alen) =
   alen == 1 ?
-    P1Fun(f, args[1], flen.start - alen) :
-    PFun(f, args, flen.start - alen)
+    P1Fun(f, args[1], (flen.start-alen):(flen.stop-alen)) :
+    PFun(f, args, (flen.start-alen):(flen.stop-alen))
+
+papp(f::AppFun, args, flen, alen) =
+  begin
+    f′, args′... = args
+    flen′, alen′ = arity(f′), length(args′)
+    alen == 1 ?
+      P1Fun(f, f′, flen′) :
+      PFun(f, args, (flen′.start-alen′):(flen′.stop-alen′))
+  end
 
 macro papp(f, args)
   f, args = esc(f), esc(args)
@@ -733,10 +755,10 @@ macro papp(f, args)
 end
 
 app(o::MFun, x) = o.f(x)
-@inline app(o::DFun, x) = P1Fun(o.f, x, 1)
+@inline app(o::DFun, x) = P1Fun(o.f, x, 1:1)
 @inline app(o::DFun, x, y) = o.f(x, y)
-app(o::AppFun, f, args...) = @papp(f, args)
-@inline app(o::AppFun, f::Vector, args...) = app(f, args...)
+app(::AppFun, f, args...) = @papp(f, args)
+@inline app(::AppFun, f::Vector, args...) = app(f, args...)
 (o::AppFun)(f, args...) = @papp(f, args)
 (o::AppFun)(f::Vector, args...) = app(f, args...)
 (o::AppFun)(f::Vector{T}, v::Vector{I}) where {T,I} = app(f, v)
@@ -882,6 +904,7 @@ end
 arity(::Train)::Arity = 1:2
 (o::Train)(x) = app(o.head, app(o.next, x))
 (o::Train)(x, y) = app(o.head, app(o.next, x, y))
+@iterable1 Train
 
 # adverbs
 
@@ -891,6 +914,7 @@ macro adverb(name, arr)
     # TODO: this is incorrect, each adverb should define its own promotion...
     Base.promote_op(f::$(esc(name)), S::Type...) = Base.promote_op(f.f, S...)
     $(esc(:arity))(::$(esc(name)))::Arity = $arr
+    @iterable1 $(esc(name))
   end
 end
 
@@ -903,11 +927,13 @@ struct Join <: AFun
   s::Vector{Char}
 end
 arity(::Join)::Arity = 1:1
+@iterable1(Join)
 
 struct Decode{T} <: AFun
   b::T
 end
 arity(::Decode)::Arity = 1:1
+@iterable1(Decode)
 
 # f/ converge
 (o::FoldM)(x) =
@@ -1006,10 +1032,12 @@ struct Split <: AFun
   s::Vector{Char}
 end
 arity(::Split)::Arity = 1:1
+@iterable1(Split)
 struct Encode{T} <: AFun
   b::T
 end
 arity(::Encode)::Arity = 1:1
+@iterable1(Encode)
 
 #   F\ scan      +\1 2 3 -> 1 3 6
 # TODO: is this correct?
@@ -1181,16 +1209,25 @@ kscan(b::Union{Int64,Vector{Int64}}) = Encode(b)
 # each
 
 @adverb EachM 1:1
-@adverb EachD 2:2
+@adverb EachD 2:8
+
+macro assertlen(xs...)
+  len = -1
+  for x in xs
+    if x isa Vector || x isa AbstractDict
+      lenx = length(x)
+      len = len == -1 ? lenx : @assert len === lenx "length error"
+    end
+  end
+end
 
 #   f' each1
 (o::EachM)(x) = keach′(o.f, x)
 # x F' each2
-(o::EachD)(x, y) = o.f(x, y)
-(o::EachD)(x::Vector, y) = o.f.(x, y)
-(o::EachD)(x, y::Vector) = o.f.(x, y)
-(o::EachD)(x::Vector, y::Vector) =
-  (@assert length(x) == length(y); o.f.(x, y))
+(o::EachD)(x::KAtom, y::KAtom) = o.f(x, y)
+(o::EachD)(x::KAtom, y) = o.f.(x, y)
+(o::EachD)(x, y::KAtom) = o.f.(x, y)
+(o::EachD)(xs...) = (@assertlen(xs...); o.f.(xs...))
 
 keach(f::KFun) = arity(f).start == 2 ? EachD(f) : EachM(f)
 
@@ -1206,16 +1243,16 @@ keach′(f, d::AbstractDict) =
 # eachright/eachleft
 
 @adverb EachR 2:2
-@adverb EachL 2:2
+@adverb EachL 2:8
 
 # x F/: y eachright
 (o::EachR)(x, y) = app(o.f, x, y)
 (o::EachR)(x, y::Vector) = isempty(y) ? y : [app(o.f, x, ye) for ye in y]
-(o::EachR)(x, y::AbstractDict) = mapvalues(o, x, y)
+(o::EachR)(x, y::AbstractDict) = mapvalues(y -> o(x, y), y)
 # x F\: y eachleft
-(o::EachL)(x, y) = app(o.f, x, y)
-(o::EachL)(x::Vector, y) = isempty(x) ? x : [app(o.f, xe, y) for xe in x]
-(o::EachL)(x::AbstractDict, y) = mapvalues(o, x, y)
+(o::EachL)(x, y...) = app(o.f, x, y...)
+(o::EachL)(x::Vector, y...) = isempty(x) ? x : [app(o.f, xe, y...) for xe in x]
+(o::EachL)(x::AbstractDict, y...) = mapvalues(x -> o(x, y...), x)
 
 keachright(f) = EachR(f)
 keachleft(f) = EachL(f)
@@ -1227,6 +1264,7 @@ keachleft(f) = EachL(f)
 
 struct Windows <: AFun; i::Int64 end
 arity(::Windows)::Arity = 1:1
+@iterable1(Windows)
 
 #   F': x   eachprior
 (o::EachP)(x::Vector) =
@@ -1237,7 +1275,7 @@ arity(::Windows)::Arity = 1:1
 (o::EachP)(s, x::Vector) =
   isempty(x) ? x :
     @inbounds [o.f(x[i], i == 1 ? s : x[i-1]) for i in 1:length(x)]
-(o::EachP)(s, x::AbstractDict) = mapvalues(o, s, x)
+(o::EachP)(s, x::AbstractDict) = mapvalues(x -> o(s, x), x)
 # i': x     windows
 (o::Windows)(x::Vector) = kwindows(o.i, x)
 # i f': x   stencil
@@ -1840,7 +1878,7 @@ compile1(syn::LBind) =
     f, a = compile1(syn.v), compile1(syn.arg)
     f isa R.KFun && !(a isa Union{Expr,Symbol}) ?
       R.papp(f, [a], 2:2, 1) :
-      :($(R.papp)($f, [$a], 2:2, 1))
+      :($(R.papp)($f, [$a], $(R.arity)($f), 1))
   end
 compile1(syn::Union{Verb,Adverb,Train}) = :($(compilefun(syn)))
 
