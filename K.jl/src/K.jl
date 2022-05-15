@@ -1544,6 +1544,8 @@ kreshape(x::Int64, y::Vector) =
     y = x < 0 ? Iterators.drop(y, length(y) + x) : y
     collect(Iterators.take(Iterators.cycle(y), abs(x)))
   end
+kreshape(x::Int64, y::AbstractDict) =
+  OrderedDict(kreshape(x, collect(y)))
 
 # I#y reshape
 kreshape(x::Vector{Int64}, y) = kreshape(x, [y])
@@ -1587,7 +1589,7 @@ kfloor(x::Vector) = kfloor.(x)
 
 # i_Y drop
 kdrop(x::Int64, y::Vector) =
-  if x == 0; y elseif x > 0; y[x + 1:end] else; y[1:end + x] end
+  x == 0 ? y : x == Null.int_null ? y : x > 0 ? y[x + 1:end] : y[1:end + x]
 kdrop(x::Int64, y::AbstractDict) =
   begin
     ks = kdrop(x, collect(keys(y)))
