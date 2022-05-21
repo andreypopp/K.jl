@@ -112,7 +112,4 @@ Works with dictionaries, distributing along its values:
       3 => 6
 
     julia> k"`a`b`c!4 5 6"
-    K.Runtime.OrderedDict{Symbol, Int64} with 3 entries:
-      :a => 4
-      :b => 5
-      :c => 6
+    (a = 4, b = 5, c = 6)

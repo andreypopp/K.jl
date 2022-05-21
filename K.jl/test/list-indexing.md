@@ -30,9 +30,7 @@ The values will be arranged to the same shape as indices passed:
 It's also possible to index with a dict:
 
     julia> k"1 2 3 4 5[`one`two!0 1]"
-    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
-      :one => 1
-      :two => 2
+    (one = 1, two = 2)
 
 If we try to index out of bounds we get null values:
 
@@ -125,19 +123,17 @@ Lists containing dicts:
      [3, 3]
 
     julia> k"dicts[0;]"
-    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
-      :a => 1
-      :b => 2
+    (a = 1, b = 2)
 
     julia> k"dicts[0 1;]"
-    2-element Vector{K.Runtime.OrderedDict{Symbol, Int64}}:
-     K.Runtime.OrderedDict(:a => 1, :b => 2)
-     K.Runtime.OrderedDict(:a => 3, :b => 4)
+    2-element Vector{NamedTuple{(:a, :b), Tuple{Int64, Int64}}}:
+     (a = 1, b = 2)
+     (a = 3, b = 4)
 
     julia> k"dicts[;]"
-    2-element Vector{K.Runtime.OrderedDict{Symbol, Int64}}:
-     K.Runtime.OrderedDict(:a => 1, :b => 2)
-     K.Runtime.OrderedDict(:a => 3, :b => 4)
+    2-element Vector{NamedTuple{(:a, :b), Tuple{Int64, Int64}}}:
+     (a = 1, b = 2)
+     (a = 3, b = 4)
 
 Another thing to note that a single `f[x;y]` indexing can call into functions
 selected by previous indices:

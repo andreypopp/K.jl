@@ -26,31 +26,24 @@
 `i_d` drops first (last, for negative `i`) elements from `d` dict:
 
     julia> k"1_`a`b`c!1 2 3"
-    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
-      :b => 2
-      :c => 3
+    (b = 2, c = 3)
     
     julia> k"-1_`a`b`c!1 2 3"
-    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
-      :a => 1
-      :b => 2
+    (a = 1, b = 2)
     
     julia> k"10_`a`b`c!1 2 3"
-    K.Runtime.OrderedDict{Symbol, Int64}()
+    NamedTuple()
     
     julia> k"-10_`a`b`c!1 2 3"
-    K.Runtime.OrderedDict{Symbol, Int64}()
+    NamedTuple()
 
 `x_d` drops `x` key from `d` dict:
 
     julia> k"`a_`a`b!1 2"
-    K.Runtime.OrderedDict{Symbol, Int64} with 1 entry:
-      :b => 2
+    (b = 2,)
     
     julia> k"`x_`a`b!1 2"
-    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
-      :a => 1
-      :b => 2
+    (a = 1, b = 2)
     
     julia> k"3_3 4!1 2" # NOTE: i_d works here
     K.Runtime.OrderedDict{Int64, Int64}()
@@ -111,12 +104,7 @@
      4
 
     julia> k"(`a`b`c!1 2 3)_`a"
-    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
-      :b => 2
-      :c => 3
+    (b = 2, c = 3)
     
     julia> k"(`a`b`c!1 2 3)_`x"
-    K.Runtime.OrderedDict{Symbol, Int64} with 3 entries:
-      :a => 1
-      :b => 2
-      :c => 3
+    (a = 1, b = 2, c = 3)

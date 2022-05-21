@@ -78,6 +78,4 @@
 `^d` distributes `^` along `d` values:
 
     julia> k"^`a`b!1 0N"
-    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
-      :a => 0
-      :b => 1
+    (a = 0, b = 1)

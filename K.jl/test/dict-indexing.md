@@ -35,14 +35,10 @@ Dicts can be indexed by other dicts, the result is the dict with the same keys
 as index:
 
     julia> k"d`aa`bb!`a`b"
-    K.Runtime.OrderedDict{Symbol, Float64} with 2 entries:
-      :aa => 1.0
-      :bb => 2.0
+    (aa = 1.0, bb = 2.0)
 
     julia> k"d`aa`bb!(`a;`b`b)"
-    K.Runtime.OrderedDict{Symbol, Any} with 2 entries:
-      :aa => 1.0
-      :bb => [2.0, 2.0]
+    (aa = 1.0, bb = [2.0, 2.0])
 
 In case a key is missing, null value will be returned for this key:
 
@@ -55,9 +51,7 @@ In case a key is missing, null value will be returned for this key:
        2.0
 
     julia> k"d`aa`bb!`a`missing"
-    K.Runtime.OrderedDict{Symbol, Float64} with 2 entries:
-      :aa => 1.0
-      :bb => NaN
+    (aa = 1.0, bb = NaN)
 
 ## Dicts with nested lists/dicts
 
@@ -72,14 +66,10 @@ In case a key is missing, null value will be returned for this key:
     1.0
     
     julia> k"lists[;0]"
-    K.Runtime.OrderedDict{Symbol, Real} with 2 entries:
-      :a => 1.0
-      :b => 3
+    (a = 1.0, b = 3)
 
     julia> k"dicts[;`d]"
-    K.Runtime.OrderedDict{Symbol, Real} with 2 entries:
-      :a => 2.0
-      :b => 3
+    (a = 2.0, b = 3)
 
 ## Dicts with complex keys
 
