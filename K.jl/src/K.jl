@@ -109,11 +109,11 @@ end
 end
 
 module Null
-int_null = typemin(Int64)
-float_null = NaN
-char_null = ' '
-symbol_null = Symbol("")
-any_null = Char[]
+const int_null = typemin(Int64)
+const float_null = NaN
+const char_null = ' '
+const symbol_null = Symbol("")
+const any_null = Char[]
 
 null(::Type{Float64}) = float_null
 null(::Type{Int64}) = int_null
@@ -453,7 +453,9 @@ end
 
 module Runtime
 import ..Null
+import TypedTables
 import TypedTables: Table
+using LoopVectorization
 
 # K-specific function types
 
@@ -571,7 +573,7 @@ replicate(v, n) =
   reduce(vcat, fill.(v, n))
 
 tovec(x) = [x]
-tovec(x::Vector) = x
+tovec(x::AbstractVector) = x
 
 tryidentity(@nospecialize(f), T::Type, @nospecialize(d)) =
   T != Any && hasmethod(f, (Type{T},)) ? f(T) : d
@@ -614,8 +616,8 @@ lidentity(f::DFun, T::Type) =
 isequal(x, y) = false
 isequal(x::T, y::T) where T = x == y
 isequal(x::Float64, y::Float64) = x === y # 1=0n~0n
-isequal(x::Vector{T}, y::Vector{T}) where {T<:KAtom} = x == y
-isequal(x::Vector, y::Vector) =
+isequal(x::AbstractVector{T}, y::AbstractVector{T}) where {T<:KAtom} = x == y
+isequal(x::AbstractVector, y::AbstractVector) =
   begin
     len = length(x)
     len != length(y) && return false
@@ -640,9 +642,9 @@ isless(x, y) = x < y
 isless(x::Char, y::Char) = isless(Int(x), Int(y))
 isless(x::Char, y) = isless(Int(x), y)
 isless(x, y::Char) = isless(x, Int(y))
-isless(x::Vector, y) = true
-isless(x, y::Vector) = false
-isless(x::Vector, y::Vector) =
+isless(x::AbstractVector, y) = true
+isless(x, y::AbstractVector) = false
+isless(x::AbstractVector, y::AbstractVector) =
   begin
     for (xe, ye) in zip(x, y)
       isequal(xe, ye) ? continue : return isless(xe, ye)
@@ -682,6 +684,9 @@ include("ordered_dict.jl")
 @inline mapvalues(f, x, y::AbstractDict) =
   OrderedDict(zip(keys(y), f(x, collect(values(y)))))
 
+@inline mapcolumns(f, x::Table) =
+  Table(map(f, TypedTables.columns(x)))
+
 isequal(x::OrderedDict{K,V}, y::OrderedDict{K,V}) where {K,V} =
   begin
     len = length(x.keys)
@@ -700,9 +705,9 @@ isequal(x::OrderedDict{K,V}, y::OrderedDict{K,V}) where {K,V} =
 non_urank = typemax(Int64)
 
 rank(x) = 0
-rank(x::Vector{T}) where T<:KAtom = 1
-rank(x::Vector{Vector{T}}) where T<:KAtom = 2
-rank(x::Vector) =
+rank(x::AbstractVector{T}) where T<:KAtom = 1
+rank(x::AbstractVector{AbstractVector{T}}) where T<:KAtom = 2
+rank(x::AbstractVector) =
   begin
     if isempty(x)
       return 2 # 1 + rank(null(eltype(x)))
@@ -718,8 +723,8 @@ rank(x::Vector) =
   end
 
 urank(x) = 0
-urank(x::Vector{T}) where T<:KAtom = 1
-urank(x::Vector) =
+urank(x::AbstractVector{T}) where T<:KAtom = 1
+urank(x::AbstractVector) =
   begin
     if isempty(x)
       return 2 # 1 + rank(null(eltype(x)))
@@ -729,13 +734,13 @@ urank(x::Vector) =
   end
 
 outdex′(x) = Null.null(typeof(x))
-outdex′(x::Vector) =
+outdex′(x::AbstractVector) =
   isempty(x) ? Null.any_null : fill(outdex(x), length(x))
 
 outdex(x) = outdex′(x)
-outdex(x::Vector{T}) where T <: KAtom =
+outdex(x::AbstractVector{T}) where T <: KAtom =
   Null.null(eltype(x))
-outdex(x::Vector) =
+outdex(x::AbstractVector) =
   isempty(x) ? Null.any_null : begin
     @inbounds v = x[1]
     fill(outdex(v), length(v))
@@ -748,6 +753,10 @@ outdex(x::NamedTuple) =
     for T′ ∈ Ts; T != T′ && return Null.any_null end
     Null.null(T)
   end
+function outdex(x::Table)
+  ks, ts = typeof(x).parameters[1].parameters
+  NamedTuple(zip(ks, map(Null.null, ts.parameters)))
+end
 
 # application
 
@@ -779,30 +788,33 @@ app(o::MFun, x) = o.f(x)
 @inline app(o::DFun, x) = P1Fun(o.f, x, 1:1)
 @inline app(o::DFun, x, y) = o.f(x, y)
 app(::AppFun, f, args...) = @papp(f, args)
-@inline app(::AppFun, f::Vector, args...) = app(f, args...)
+@inline app(::AppFun, f::AbstractVector, args...) = app(f, args...)
 (o::AppFun)(f, args...) = @papp(f, args)
-(o::AppFun)(f::Vector, args...) = app(f, args...)
-(o::AppFun)(f::Vector{T}, v::Vector{I}) where {T,I} = app(f, v)
+(o::AppFun)(f::AbstractVector, args...) = app(f, args...)
+(o::AppFun)(f::Table, args...) = app(f, args...)
+(o::AppFun)(f::KDict, args...) = app(f, args...)
+(o::AppFun)(f::AbstractVector{T}, v::AbstractVector{I}) where {T,I} = app(f, v)
 app(@nospecialize(f::KFun), args...) = @papp(f, args)
 
-app(x::Vector, is...) =
+app(x::AbstractVector, is::Vararg) =
   begin
     i, is... = is
     i === Colon() ?
       keach′(e -> app(e, is...), x) :
-      i isa Vector || i isa AbstractDict ?
+      i isa AbstractVector || i isa AbstractDict ?
       keach′(e -> app(e, is...), app(x, i)) :
       app(app(x, i), is...)
   end
-app(x::Vector, ::Colon) = x
-app(x::Vector, is::AbstractVector) = app.(Ref(x), is)
-(app(x::Vector{T}, i::Int64)::T) where {T} =
+app(x::AbstractVector, ::Colon) = x
+app(x::AbstractVector, is::AbstractVector) = app.(Ref(x), is)
+(app(x::AbstractVector{T}, i::Int64)::T) where {T} =
   (v = get(x, i + 1, nothing); v === nothing ? outdex(x) : v)
-(app(x::Vector{T}, is::Vector{Int64})::Vector{T}) where {T} =
+(app(x::AbstractVector{T}, is::AbstractVector{Int64})::AbstractVector{T}) where {T} =
   app.(Ref(x), is)
-app(x::Vector, is::KDict) = mapvalues(app, x, is)
-Base.promote_op(::typeof(app), T::Type{<:Vector}, I::Type{<:Vector}) = T
-Base.promote_op(::typeof(app), T::Type{<:Vector}, I::Type{Int64}) = eltype(T)
+app(x::AbstractVector, is::KDict) = mapvalues(app, x, is)
+
+Base.promote_op(::typeof(app), T::Type{<:AbstractVector}, I::Type{<:AbstractVector}) = T
+Base.promote_op(::typeof(app), T::Type{<:AbstractVector}, I::Type{Int64}) = eltype(T)
 
 app(x::AbstractDict, is...) =
   begin
@@ -825,7 +837,7 @@ app(x::AbstractDict, i::KAtom) =
     @assert xrank == 0 "rank error"
     dapp(x, i)
   end
-app(x::AbstractDict, i::Vector) =
+app(x::AbstractDict, i::AbstractVector) =
   begin
     xrank, irank = urank(first(x).first), rank(i)
     @assert xrank <= irank "rank error"
@@ -853,7 +865,16 @@ app(x::NamedTuple, is...) =
       keach′(e -> app(e, is...), x) :
       app(app(x, k), is...)
   end
-app(x::NamedTuple, is::Vector) = app.(Ref(x), is)
+app(x::NamedTuple, is::AbstractVector) = app.(Ref(x), is)
+
+app(x::Table, i::Symbol) =
+  hasproperty(x, i) ? getproperty(x, i) : fill(Null.int_null, length(x))
+app(x::Table, i::Int64) =
+  i < length(x) ? (@inbounds x[i + 1]) : outdex(x)
+app(x::Table, i::AbstractVector{Symbol}) =
+  app.(Ref(x), i)
+app(x::Table, i::AbstractVector{Int64}) =
+  Table(map(c -> app(c, i), TypedTables.columns(x)))
 
 dapp(d::AbstractDict, key) =
   begin
@@ -884,9 +905,10 @@ end
 macro dyad4vector(f)
   f = esc(f)
   quote
-    $f(x::Vector, y) = $f.(x, y)
-    $f(x, y::Vector) = $f.(x, y)
-    $f(x::Vector, y::Vector) = (@assert length(x) == length(y); $f.(x, y))
+    $f(x::AbstractVector, y) = $f.(x, y)
+    $f(x, y::AbstractVector) = $f.(x, y)
+    $f(x::AbstractVector, y::AbstractVector) =
+      (@assert length(x) == length(y); $f.(x, y))
   end
 end
 
@@ -905,25 +927,25 @@ macro dyad4dict(f, V=nothing)
     $f(x::NamedTuple, y) = NamedTuple(zip(keys(x), $f.(values(x), y)))
     $f(x, y::AbstractDict) = OrderedDict(zip(keys(y), $f.(x, values(y))))
     $f(x, y::NamedTuple) = NamedTuple(zip(keys(y), $f.(x, values(y))))
-    $f(x::AbstractDict, y::Vector) =
+    $f(x::AbstractDict, y::AbstractVector) =
       begin
         @assert length(x) == length(y)
         vals = $f.(values(x), y)
         OrderedDict(zip(keys(x), vals))
       end
-    $f(x::NamedTuple, y::Vector) =
+    $f(x::NamedTuple, y::AbstractVector) =
       begin
         @assert length(x) == length(y)
         vals = $f.(values(x), y)
         NamedTuple(zip(keys(x), vals))
       end
-    $f(x::Vector, y::AbstractDict) =
+    $f(x::AbstractVector, y::AbstractDict) =
       begin
         @assert length(x) == length(y)
         vals = $f.(x, values(y))
         OrderedDict(zip(keys(y), vals))
       end
-    $f(x::Vector, y::NamedTuple) =
+    $f(x::AbstractVector, y::NamedTuple) =
       begin
         @assert length(x) == length(y)
         vals = $f.(x, values(y))
@@ -958,6 +980,14 @@ macro dyad4dict(f, V=nothing)
       end
   end
 end
+
+# macro dyad4table(f)
+#   f = esc(f)
+#   quote
+#     $f(x::Table, y::KAtom) =
+#       Table(map(f, TypedTables.columns(x)))
+#   end
+# end
 
 # trains
 
@@ -1390,6 +1420,8 @@ kadd(x, y) = x + y
 @dyad4char(kadd)
 @dyad4vector(kadd)
 @dyad4dict(kadd)
+kadd(x, y::Vector) = @tturbo kadd.(x, y)
+kadd(x::Vector, y) = @tturbo kadd.(x, y)
 
 # - x
 kneg(x) = -x
@@ -1426,6 +1458,8 @@ kdiv(x, y) = x / y
 @dyad4char(kdiv)
 @dyad4vector(kdiv)
 @dyad4dict(kdiv, Float64)
+kdiv(x, y::Vector) = @tturbo kdiv.(x, y)
+kdiv(x::Vector, y) = @tturbo kdiv.(x, y)
 
 # ! i enum
 kenum(x::Int64) =
@@ -1457,6 +1491,7 @@ kenum(x::Vector) =
   end
 # !d keys
 kenum(x::KDict) = collect(keys(x))
+kenum(x::Table) = collect(TypedTables.columnnames(x))
 
 # i!N mod / div
 kmod(x::Int64, y) =
@@ -1549,13 +1584,67 @@ kgroup(x::Int64) =
 # =X group
 kgroup(x::AbstractVector) =
   begin
-    g = OrderedDict{eltype(x),Vector{Int64}}()
-    allocg = Vector{Int64}
-    for (n, xe) in enumerate(x)
-      push!(get!(allocg, g, xe), n - 1)
+    T = eltype(x)
+    if length(x) < 30_000_000
+      g = OrderedDict{T,Vector{Int64}}()
+      allocg = Vector{Int64}
+      for (n, xe) in enumerate(x)
+        idx = ht_keyindex2(g, xe)
+        if idx < 0
+          _setindex!(g, [n-1], xe, -idx)
+        else
+          @inbounds push!(g.vals[idx], n - 1)
+        end
+      end
+      g
+    else
+      ps = collect(partition(x, 5_000_000))
+      gs = Vector{OrderedDict{T,Vector{Int64}}}(undef, length(ps))
+      Threads.@threads for i = 1:length(ps)
+        gs[i] = kgroup(ps[i])
+      end
+      r = OrderedDict{T,Vector{Int64}}()
+      for g in gs; mergewith!(append!, r, g) end
+      r
     end
-    g
   end
+
+kgrouplen(x::AbstractVector) =
+  begin
+    T = eltype(x)
+    if length(x) < 30_000_000
+      g = OrderedDict{T,Int64}()
+      allocg = Vector{Int64}
+      for xe in x
+        idx = ht_keyindex2(g, xe)
+        if idx < 0
+          _setindex!(g, 1, xe, -idx)
+        else
+          @inbounds g.vals[idx] = g.vals[idx] + 1
+        end
+      end
+      g
+    else
+      ps = collect(partition(x, 5_000_000))
+      gs = Vector{OrderedDict{T,Int64}}(undef, length(ps))
+      Threads.@threads for i = 1:length(ps)
+        gs[i] = kgrouplen(ps[i])
+      end
+      r = OrderedDict{T,Int64}()
+      for g in gs; mergewith!((+), r, g) end
+      r
+    end
+  end
+
+function partition(x::Table, n::Int64)
+  ns = TypedTables.columnnames(x)
+  cs = TypedTables.columns(x)
+  cs = map(c -> collect(Iterators.partition(c, n)), cs)
+  Iterators.map(vs -> Table(NamedTuple(zip(ns, vs))), zip(cs...))
+end
+@inline function partition(x::AbstractVector, n::Int64)
+  Iterators.partition(x, n)
+end
 
 # x=y eq
 keq(x, y) = Int(x == y)
@@ -1606,22 +1695,26 @@ kfill(x::Vector, y::Vector) =
 
 # #x length
 klen(x) = 1
-klen(x::Vector) = length(x)
+klen(x::AbstractVector) = length(x)
 klen(x::KDict) = length(x)
 
 # i#y reshape
 kreshape(x::Int64, y) = kreshape(x, [y])
-kreshape(x::Int64, y::Vector) =
-  begin
-    x == 0 && return empty(y)
-    x == Null.int_null && return y
-    y = x < 0 ? Iterators.drop(y, length(y) + x) : y
-    collect(Iterators.take(Iterators.cycle(y), abs(x)))
-  end
+function kreshape(x::Int64, y::AbstractVector)
+  x == 0 && return empty(y)
+  x == Null.int_null && return y
+  # TODO: handle negative drop here
+  y = x < 0 ? Iterators.drop(y, length(y) + x) : y
+  collect(Iterators.take(Iterators.cycle(y), abs(x)))
+end
+kreshape(x::Int64, y::Table) =
+  Table(map(c -> kreshape(x, c), TypedTables.columns(y)))
 # TODO: is this correct?
 # TODO: NamedTuple
 kreshape(x::Int64, y::AbstractDict) =
   OrderedDict(kreshape(x, collect(y)))
+function kreshape_1(x::Int64, y::AbstractVector)
+end
 
 # I#y reshape
 kreshape(x::Vector{Int64}, y) = kreshape(x, [y])
@@ -1653,6 +1746,8 @@ kreshape(x::Vector, y::AbstractDict) =
   OrderedDict(zip(x, app.(Ref(y), x)))
 kreshape(x::Vector, y::NamedTuple) = 
   NamedTuple(zip(x, app.(Ref(y), x)))
+kreshape(x::Vector{Symbol}, y::Table) =
+  Table(NamedTuple(zip(x, app(y, x))))
 
 # _n floor
 kfloor(x::Int64) = x
@@ -1662,12 +1757,22 @@ kfloor(x::Float64) = x === NaN ? Null.int_null : floor(Int64, x)
 kfloor(x::Char) = lowercase(x)
 kfloor(x::Symbol) = Symbol(lowercase(string(x)))
 
-kfloor(x::Vector) = kfloor.(x)
+kfloor(x::AbstractVector) = kfloor.(x)
+kfloor(x::Vector{Float64}) = begin
+  r = Vector{Int64}(undef, length(x))
+  @tturbo for i in 1:length(x)
+    xe = x[i]
+    r[i] = isnan(xe) ? Null.int_null : floor(Int64, xe)
+  end
+  r
+end
 @monad4dict(kfloor)
 
 # i_Y drop
-kdrop(x::Int64, y::Vector) =
-  x == 0 ? y : x == Null.int_null ? y : x > 0 ? y[x + 1:end] : y[1:end + x]
+# TODO: use @view for huge vectors?
+kdrop(x::Int64, y::AbstractVector) =
+  x == 0 ? y : x == Null.int_null ? y :
+    x > 0 ? y[x + 1:end] : y[1:end + x]
 kdrop(x::Int64, y::AbstractDict) =
   begin
     ks = kdrop(x, collect(keys(y)))
@@ -1775,7 +1880,7 @@ kuniq(x::Vector) =
   end
 
 # .d values
-kget(x::AbstractDict) = collect(values(x))
+kget(x::KDict) = collect(values(x))
 
 # x.y appn
 kappn(x, y) = app(x, y)
@@ -1879,12 +1984,22 @@ adverbs = Dict(
                Symbol(raw"':") => R.keachprior,
               )
 
+idioms2 = Dict(
+               (Adverb("'", Verb("#:")), Verb("=:")) => R.MFun(R.kgrouplen)
+              )
+
 compile(str::String) = compile(Parse.parse(str))
 compile(syn::Seq) = quote $(map(compile1, syn.body)...) end
 
 compile1(syn::App) =
   begin
     f, args = syn.head, syn.args
+    if length(args) == 1 && args[1] isa App
+      idiom = get(idioms2, (f, args[1].head), nothing)
+      if idiom !== nothing
+        f, args = idiom, args[1].args
+      end
+    end
     args, pargs =
       begin
         args′, pargs = [], []
@@ -1916,6 +2031,8 @@ compile1(syn::App) =
       @assert isempty(pargs) "cannot project :x"
       rhs=args[1]
       :(return $rhs)
+    elseif f isa R.KFun
+      compileapp(f, args, pargs)
     elseif f isa Union{Verb,Adverb}
       # @assert length(args) in (1, 2)
       f = compile1(f)
@@ -1976,6 +2093,9 @@ compile1(syn::Union{Verb,Adverb,Train}) = :($(compilefun(syn)))
 
 compileargs(f, args::Vector) =
   begin
+    length(args) == 1 && return f([args[1] isa Syn ?
+                                   compile1(args[1]) :
+                                   args[1]])
     bindings = []
     args′ = []
     for arg in args
@@ -2027,7 +2147,12 @@ compileapp(f::R.KFun, args) =
 
 compilefun(syn) = compile1(syn)
 compilefun(syn::Train) =
-  :($(R.Train)($(compile1(syn.head)), $(compile1(syn.next))))
+  begin
+    idiom = get(idioms2, (syn.head, syn.next), nothing)
+    idiom !== nothing ?
+      idiom :
+      :($(R.Train)($(compile1(syn.head)), $(compile1(syn.next))))
+  end
 compilefun(syn::Verb) =
   begin
     f = get(verbs, syn.v, nothing)
