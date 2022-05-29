@@ -618,13 +618,6 @@ const hash_vector_seed = UInt === UInt64 ? 0x7e2d6fb6448beb77 : 0xd4514ce5
 
 hash(x) = hash(x, zero(UInt))
 hash(x, h) = Base.hash(x, h)
-hash(a::NamedTuple, h::UInt) = begin
-    hv = hash_dict_seed
-    for k in keys(a)
-        hv ⊻= hash(k, hash(getproperty(a, k)))
-    end
-    hash(hv, h)
-end
 hash(a::AbstractDict, h::UInt) = begin
     hv = hash_dict_seed
     for (k,v) in a
@@ -632,6 +625,10 @@ hash(a::AbstractDict, h::UInt) = begin
     end
     hash(hv, h)
 end
+hash(x::AbstractDict{Symbol}, h::UInt) =
+  xor(objectid(Tuple(keys(x))), hash(Tuple(values(x)), h))
+hash(x::NamedTuple, h::UInt) =
+  xor(objectid(Base._nt_names(x)), hash(Tuple(x), h))
 function hash(A::AbstractVector, h::UInt)
     # For short arrays, it's not worth doing anything complicated
     if length(A) < 8192
