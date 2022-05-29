@@ -613,10 +613,94 @@ lidentity(f::DFun, T::Type) =
   else; nothing
   end
 
+const hash_dict_seed = UInt === UInt64 ? 0x6d35bb51952d5539 : 0x952d5539
+const hash_vector_seed = UInt === UInt64 ? 0x7e2d6fb6448beb77 : 0xd4514ce5
+
+hash(x) = hash(x, zero(UInt))
+hash(x, h) = Base.hash(x, h)
+hash(a::NamedTuple, h::UInt) = begin
+    hv = hash_dict_seed
+    for k in keys(a)
+        hv ⊻= hash(k, hash(getproperty(a, k)))
+    end
+    hash(hv, h)
+end
+hash(a::AbstractDict, h::UInt) = begin
+    hv = hash_dict_seed
+    for (k,v) in a
+        hv ⊻= hash(k, hash(v))
+    end
+    hash(hv, h)
+end
+function hash(A::AbstractVector, h::UInt)
+    # For short arrays, it's not worth doing anything complicated
+    if length(A) < 8192
+        for x in A
+            h = hash(x, h)
+        end
+        return h
+    end
+
+    # Goal: Hash approximately log(N) entries with a higher density of hashed elements
+    # weighted towards the end and special consideration for repeated values. Colliding
+    # hashes will often subsequently be compared by equality -- and equality between arrays
+    # works elementwise forwards and is short-circuiting. This means that a collision
+    # between arrays that differ by elements at the beginning is cheaper than one where the
+    # difference is towards the end. Furthermore, choosing `log(N)` arbitrary entries from a
+    # sparse array will likely only choose the same element repeatedly (zero in this case).
+
+    # To achieve this, we work backwards, starting by hashing the last element of the
+    # array. After hashing each element, we skip `fibskip` elements, where `fibskip`
+    # is pulled from the Fibonacci sequence -- Fibonacci was chosen as a simple
+    # ~O(log(N)) algorithm that ensures we don't hit a common divisor of a dimension
+    # and only end up hashing one slice of the array (as might happen with powers of
+    # two). Finally, we find the next distinct value from the one we just hashed.
+
+    # This is a little tricky since skipping an integer number of values inherently works
+    # with linear indices, but `findprev` uses `keys`. Hoist out the conversion "maps":
+    ks = keys(A)
+    key_to_linear = LinearIndices(ks) # Index into this map to compute the linear index
+    linear_to_key = vec(ks)           # And vice-versa
+
+    # Start at the last index
+    keyidx = last(ks)
+    linidx = key_to_linear[keyidx]
+    fibskip = prevfibskip = oneunit(linidx)
+    first_linear = first(LinearIndices(linear_to_key))
+    n = 0
+    while true
+        n += 1
+        # Hash the element
+        elt = A[keyidx]
+        h = hash(keyidx=>elt, h)
+
+        # Skip backwards a Fibonacci number of indices -- this is a linear index operation
+        linidx = key_to_linear[keyidx]
+        linidx < fibskip + first_linear && break
+        linidx -= fibskip
+        keyidx = linear_to_key[linidx]
+
+        # Only increase the Fibonacci skip once every N iterations. This was chosen
+        # to be big enough that all elements of small arrays get hashed while
+        # obscenely large arrays are still tractable. With a choice of N=4096, an
+        # entirely-distinct 8000-element array will have ~75% of its elements hashed,
+        # with every other element hashed in the first half of the array. At the same
+        # time, hashing a `typemax(Int64)`-length Float64 range takes about a second.
+        if rem(n, 4096) == 0
+            fibskip, prevfibskip = fibskip + prevfibskip, fibskip
+        end
+
+        # Find a key index with a value distinct from `elt` -- might be `keyidx` itself
+        keyidx = findprev(!isequal(elt), A, keyidx)
+        keyidx === nothing && break
+    end
+
+    return h
+end
+
 isequal(x, y) = false
 isequal(x::T, y::T) where T = x == y
 isequal(x::Float64, y::Float64) = x === y # 1=0n~0n
-isequal(x::AbstractVector{T}, y::AbstractVector{T}) where {T<:KAtom} = x == y
 isequal(x::AbstractVector, y::AbstractVector) =
   begin
     len = length(x)
@@ -630,6 +714,28 @@ isequal(x::AbstractDict{K,V}, y::AbstractDict{K,V}) where {K,V} =
   begin
     length(x) != length(y) && return false
     for (xe, ye) in zip(x, y)
+      if !isequal(xe.first, ye.first) ||
+         !isequal(xe.second, ye.second)
+        return false
+      end
+    end
+    return true
+  end
+isequal(x::AbstractDict{Symbol}, y::NamedTuple) =
+  begin
+    length(x) != length(y) && return false
+    for (xe, ye) in zip(x, pairs(y))
+      if !isequal(xe.first, ye.first) ||
+         !isequal(xe.second, ye.second)
+        return false
+      end
+    end
+    return true
+  end
+isequal(x::NamedTuple, y::AbstractDict{Symbol}) =
+  begin
+    length(x) != length(y) && return false
+    for (xe, ye) in zip(pairs(x), y)
       if !isequal(xe.first, ye.first) ||
          !isequal(xe.second, ye.second)
         return false
@@ -659,7 +765,6 @@ import Base: <, <=, ==, convert, length, isempty, iterate, delete!,
                  in, haskey, keys, merge, copy, cat,
                  push!, pop!, popfirst!, insert!,
                  union!, delete!, empty, sizehint!,
-                 hash,
                  map, map!, reverse,
                  first, last, eltype, getkey, values, sum,
                  merge, merge!, lt, Ordering, ForwardOrdering, Forward,
@@ -1420,8 +1525,6 @@ kadd(x, y) = x + y
 @dyad4char(kadd)
 @dyad4vector(kadd)
 @dyad4dict(kadd)
-kadd(x, y::Vector) = @tturbo kadd.(x, y)
-kadd(x::Vector, y) = @tturbo kadd.(x, y)
 
 # - x
 kneg(x) = -x
@@ -1458,8 +1561,6 @@ kdiv(x, y) = x / y
 @dyad4char(kdiv)
 @dyad4vector(kdiv)
 @dyad4dict(kdiv, Float64)
-kdiv(x, y::Vector) = @tturbo kdiv.(x, y)
-kdiv(x::Vector, y) = @tturbo kdiv.(x, y)
 
 # ! i enum
 kenum(x::Int64) =
@@ -1709,10 +1810,10 @@ function kreshape(x::Int64, y::AbstractVector)
 end
 kreshape(x::Int64, y::Table) =
   Table(map(c -> kreshape(x, c), TypedTables.columns(y)))
-# TODO: is this correct?
-# TODO: NamedTuple
 kreshape(x::Int64, y::AbstractDict) =
   OrderedDict(kreshape(x, collect(y)))
+kreshape(x::Int64, y::NamedTuple) =
+  NamedTuple(kreshape(x, pairs(y)))
 function kreshape_1(x::Int64, y::AbstractVector)
 end
 
