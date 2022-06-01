@@ -456,6 +456,7 @@ import ..Null
 import TypedTables
 import TypedTables: Table
 using LoopVectorization
+using StatsBase
 
 # K-specific function types
 
@@ -1996,6 +1997,25 @@ ktype(x::Vector{Symbol}) = :S
 ktype(x::Vector{Char}) = :C
 ktype(x::Vector) = :A
 ktype(x::Train) = :q
+
+# i?x roll, deal
+kfind(i::Int64, x::Int64) = 
+  begin
+    if i >= 0
+      rand(0:(x-1), i)
+    else 
+      sample(0:(x-1), abs(i), replace=false)
+    end
+  end
+
+kfind(i::Int64, x::Vector) = 
+  begin
+    if i >= 0
+      rand(x, i)
+    else 
+      sample(x, abs(i), replace=false)
+    end
+  end
 
 # X?y find
 kfind(x::Vector, y) = kfind1(x, y)
