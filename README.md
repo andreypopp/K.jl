@@ -76,7 +76,9 @@ appreciated, list of incomplete items include:
   - [ ] `   X' binsearch`
   - [ ] `   I/ decode` missing impl for higher rank arrays
   - [ ] `   I\ encode` missing impl for higher rank arrays
-- [ ] tables
+- [-] tables
+  - [x] tables are supported through `TypedTables` package
+  - [ ] support from most of primitives are missing
 - [ ] pretty printer / value string representation
 
 [Julia]: https://julialang.org
