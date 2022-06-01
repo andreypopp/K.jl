@@ -14,6 +14,7 @@ development environment:
     $ cd K.jl
     $ julia
     julia> using Pkg
+    julia> Pkg.activate(".")
     julia> Pkg.instantiate()
 
 ## Usage
