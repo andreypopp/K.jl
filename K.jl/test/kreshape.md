@@ -89,13 +89,13 @@
 `x#d` builds a new dict out of `d` with keys specified by `x`:
 
     julia> k""" `a`b#`a`b`c!1 2 3 """
-    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
-      :a => 1
-      :b => 2
+    (a = 1, b = 2)
     
     julia> k""" (,`x)#`a`b`c!1 2 3 """
-    K.Runtime.OrderedDict{Symbol, Int64} with 1 entry:
-      :x => -9223372036854775808
+    (x = -9223372036854775808,)
+
+    julia> k""" (,`x)#`a`b`c!1.0 2 3 """
+    (x = NaN,)
     
     julia> k""" ()#`a`b`c!1 2 3 """
-    K.Runtime.OrderedDict{Any, Any}()
+    NamedTuple()

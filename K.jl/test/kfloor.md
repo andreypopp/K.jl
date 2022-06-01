@@ -23,9 +23,7 @@
      3
 
     julia> k"_`a`b!1.2 3.9"
-    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
-      :a => 1
-      :b => 3
+    (a = 1, b = 3)
 
 `_C` lowercases string `C`:
 
@@ -46,6 +44,4 @@
      'd': ASCII/Unicode U+0064 (category Ll: Letter, lowercase)
     
     julia> k"_`a`b!(\"Hello\"; \"World\")"
-    K.Runtime.OrderedDict{Symbol, Vector{Char}} with 2 entries:
-      :a => ['h', 'e', 'l', 'l', 'o']
-      :b => ['w', 'o', 'r', 'l', 'd']
+    (a = ['h', 'e', 'l', 'l', 'o'], b = ['w', 'o', 'r', 'l', 'd'])

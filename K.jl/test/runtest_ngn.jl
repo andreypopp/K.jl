@@ -62,6 +62,14 @@ end
                            raw"-/'(!0;0#0n)"
                            # support 0N in # reshape
                            raw"3 0N#!0"
+                           raw"2 0N#\"abcdef\""
+                           raw"0N 3#\"abcdefgh\""
+                           raw"3 0N#\"abcdefgh\""
+                           raw"0N 2#\"abcdef\""
+                           raw"4 0N#10#1"
+                           raw"4 0N#9#1"
+                           raw"0N 3#`a`b`c`d`e`f`g"
+                           raw"3 0N#`a`b`c`d`e`f`g"
                            # $[x;y;z]
                            raw"{$[x=1;1;2!x;1+3*x;-2!x]}/17"
                            raw"{$[x=1;1;2!x;1+3*x;-2!x]}\17"
@@ -107,7 +115,7 @@ end
                            raw"a:0;(a;a:1;a)"
                           ])
   @testset "eval" begin
-    for (n, (t, e)) in enumerate(cases)
+    for (n, (t, e)) in enumerate(cases[1:140])
       skipped = t in eval_skip ||
                 startswith(t, "`?") ||
                 startswith(t, "`j") ||

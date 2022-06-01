@@ -36,10 +36,7 @@
      'w': ASCII/Unicode U+0077 (category Ll: Letter, lowercase)
 
     julia> k"2^`a`b`c!1 0N 3"
-    K.Runtime.OrderedDict{Symbol, Int64} with 3 entries:
-      :a => 1
-      :b => 2
-      :c => 3
+    (a = 1, b = 2, c = 3)
 
 `X^y` removes from `X` everything occuring in `y`:
 

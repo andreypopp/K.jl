@@ -109,11 +109,11 @@ end
 end
 
 module Null
-int_null = typemin(Int64)
-float_null = NaN
-char_null = ' '
-symbol_null = Symbol("")
-any_null = Char[]
+const int_null = typemin(Int64)
+const float_null = NaN
+const char_null = ' '
+const symbol_null = Symbol("")
+const any_null = Char[]
 
 null(::Type{Float64}) = float_null
 null(::Type{Int64}) = int_null
@@ -453,6 +453,9 @@ end
 
 module Runtime
 import ..Null
+import TypedTables
+import TypedTables: Table
+using LoopVectorization
 
 # K-specific function types
 
@@ -564,9 +567,13 @@ Base.promote_op(o::P1Fun, S::Type...) =
 # K-types
 
 KAtom = Union{Float64,Int64,Symbol,Char}
+KDict = Union{AbstractDict,NamedTuple}
 
 replicate(v, n) =
   reduce(vcat, fill.(v, n))
+
+tovec(x) = [x]
+tovec(x::AbstractVector) = x
 
 tryidentity(@nospecialize(f), T::Type, @nospecialize(d)) =
   T != Any && hasmethod(f, (Type{T},)) ? f(T) : d
@@ -606,10 +613,92 @@ lidentity(f::DFun, T::Type) =
   else; nothing
   end
 
+const hash_dict_seed = UInt === UInt64 ? 0x6d35bb51952d5539 : 0x952d5539
+const hash_vector_seed = UInt === UInt64 ? 0x7e2d6fb6448beb77 : 0xd4514ce5
+
+hash(x) = hash(x, zero(UInt))
+hash(x, h) = Base.hash(x, h)
+hash(a::AbstractDict, h::UInt) = begin
+    hv = hash_dict_seed
+    for (k,v) in a
+        hv ⊻= hash(k, hash(v))
+    end
+    hash(hv, h)
+end
+hash(x::AbstractDict{Symbol}, h::UInt) =
+  xor(objectid(Tuple(keys(x))), hash(Tuple(values(x)), h))
+hash(x::NamedTuple, h::UInt) =
+  xor(objectid(Base._nt_names(x)), hash(Tuple(x), h))
+function hash(A::AbstractVector, h::UInt)
+    # For short arrays, it's not worth doing anything complicated
+    if length(A) < 8192
+        for x in A
+            h = hash(x, h)
+        end
+        return h
+    end
+
+    # Goal: Hash approximately log(N) entries with a higher density of hashed elements
+    # weighted towards the end and special consideration for repeated values. Colliding
+    # hashes will often subsequently be compared by equality -- and equality between arrays
+    # works elementwise forwards and is short-circuiting. This means that a collision
+    # between arrays that differ by elements at the beginning is cheaper than one where the
+    # difference is towards the end. Furthermore, choosing `log(N)` arbitrary entries from a
+    # sparse array will likely only choose the same element repeatedly (zero in this case).
+
+    # To achieve this, we work backwards, starting by hashing the last element of the
+    # array. After hashing each element, we skip `fibskip` elements, where `fibskip`
+    # is pulled from the Fibonacci sequence -- Fibonacci was chosen as a simple
+    # ~O(log(N)) algorithm that ensures we don't hit a common divisor of a dimension
+    # and only end up hashing one slice of the array (as might happen with powers of
+    # two). Finally, we find the next distinct value from the one we just hashed.
+
+    # This is a little tricky since skipping an integer number of values inherently works
+    # with linear indices, but `findprev` uses `keys`. Hoist out the conversion "maps":
+    ks = keys(A)
+    key_to_linear = LinearIndices(ks) # Index into this map to compute the linear index
+    linear_to_key = vec(ks)           # And vice-versa
+
+    # Start at the last index
+    keyidx = last(ks)
+    linidx = key_to_linear[keyidx]
+    fibskip = prevfibskip = oneunit(linidx)
+    first_linear = first(LinearIndices(linear_to_key))
+    n = 0
+    while true
+        n += 1
+        # Hash the element
+        elt = A[keyidx]
+        h = hash(keyidx=>elt, h)
+
+        # Skip backwards a Fibonacci number of indices -- this is a linear index operation
+        linidx = key_to_linear[keyidx]
+        linidx < fibskip + first_linear && break
+        linidx -= fibskip
+        keyidx = linear_to_key[linidx]
+
+        # Only increase the Fibonacci skip once every N iterations. This was chosen
+        # to be big enough that all elements of small arrays get hashed while
+        # obscenely large arrays are still tractable. With a choice of N=4096, an
+        # entirely-distinct 8000-element array will have ~75% of its elements hashed,
+        # with every other element hashed in the first half of the array. At the same
+        # time, hashing a `typemax(Int64)`-length Float64 range takes about a second.
+        if rem(n, 4096) == 0
+            fibskip, prevfibskip = fibskip + prevfibskip, fibskip
+        end
+
+        # Find a key index with a value distinct from `elt` -- might be `keyidx` itself
+        keyidx = findprev(!isequal(elt), A, keyidx)
+        keyidx === nothing && break
+    end
+
+    return h
+end
+
 isequal(x, y) = false
 isequal(x::T, y::T) where T = x == y
 isequal(x::Float64, y::Float64) = x === y # 1=0n~0n
-isequal(x::Vector, y::Vector) where T =
+isequal(x::AbstractVector, y::AbstractVector) =
   begin
     len = length(x)
     len != length(y) && return false
@@ -629,14 +718,36 @@ isequal(x::AbstractDict{K,V}, y::AbstractDict{K,V}) where {K,V} =
     end
     return true
   end
+isequal(x::AbstractDict{Symbol}, y::NamedTuple) =
+  begin
+    length(x) != length(y) && return false
+    for (xe, ye) in zip(x, pairs(y))
+      if !isequal(xe.first, ye.first) ||
+         !isequal(xe.second, ye.second)
+        return false
+      end
+    end
+    return true
+  end
+isequal(x::NamedTuple, y::AbstractDict{Symbol}) =
+  begin
+    length(x) != length(y) && return false
+    for (xe, ye) in zip(pairs(x), y)
+      if !isequal(xe.first, ye.first) ||
+         !isequal(xe.second, ye.second)
+        return false
+      end
+    end
+    return true
+  end
   
 isless(x, y) = x < y
 isless(x::Char, y::Char) = isless(Int(x), Int(y))
 isless(x::Char, y) = isless(Int(x), y)
 isless(x, y::Char) = isless(x, Int(y))
-isless(x::Vector, y) = true
-isless(x, y::Vector) = false
-isless(x::Vector, y::Vector) =
+isless(x::AbstractVector, y) = true
+isless(x, y::AbstractVector) = false
+isless(x::AbstractVector, y::AbstractVector) =
   begin
     for (xe, ye) in zip(x, y)
       isequal(xe, ye) ? continue : return isless(xe, ye)
@@ -651,7 +762,6 @@ import Base: <, <=, ==, convert, length, isempty, iterate, delete!,
                  in, haskey, keys, merge, copy, cat,
                  push!, pop!, popfirst!, insert!,
                  union!, delete!, empty, sizehint!,
-                 hash,
                  map, map!, reverse,
                  first, last, eltype, getkey, values, sum,
                  merge, merge!, lt, Ordering, ForwardOrdering, Forward,
@@ -664,8 +774,20 @@ import Base: <, <=, ==, convert, length, isempty, iterate, delete!,
 include("dict_support.jl")
 include("ordered_dict.jl")
 
+@inline mapvalues(f, x::NamedTuple) =
+  NamedTuple(zip(keys(x), f(collect(values(x)))))
+
 @inline mapvalues(f, x::AbstractDict) =
   OrderedDict(zip(keys(x), f(collect(values(x)))))
+
+@inline mapvalues(f, x, y::NamedTuple) =
+  NamedTuple(zip(keys(y), f(x, collect(values(y)))))
+
+@inline mapvalues(f, x, y::AbstractDict) =
+  OrderedDict(zip(keys(y), f(x, collect(values(y)))))
+
+@inline mapcolumns(f, x::Table) =
+  Table(map(f, TypedTables.columns(x)))
 
 isequal(x::OrderedDict{K,V}, y::OrderedDict{K,V}) where {K,V} =
   begin
@@ -685,9 +807,9 @@ isequal(x::OrderedDict{K,V}, y::OrderedDict{K,V}) where {K,V} =
 non_urank = typemax(Int64)
 
 rank(x) = 0
-rank(x::Vector{T}) where T<:KAtom = 1
-rank(x::Vector{Vector{T}}) where T<:KAtom = 2
-rank(x::Vector) =
+rank(x::AbstractVector{T}) where T<:KAtom = 1
+rank(x::AbstractVector{AbstractVector{T}}) where T<:KAtom = 2
+rank(x::AbstractVector) =
   begin
     if isempty(x)
       return 2 # 1 + rank(null(eltype(x)))
@@ -703,8 +825,8 @@ rank(x::Vector) =
   end
 
 urank(x) = 0
-urank(x::Vector{T}) where T<:KAtom = 1
-urank(x::Vector) =
+urank(x::AbstractVector{T}) where T<:KAtom = 1
+urank(x::AbstractVector) =
   begin
     if isempty(x)
       return 2 # 1 + rank(null(eltype(x)))
@@ -714,19 +836,29 @@ urank(x::Vector) =
   end
 
 outdex′(x) = Null.null(typeof(x))
-outdex′(x::Vector) =
+outdex′(x::AbstractVector) =
   isempty(x) ? Null.any_null : fill(outdex(x), length(x))
 
 outdex(x) = outdex′(x)
-outdex(x::Vector{T}) where T <: KAtom =
+outdex(x::AbstractVector{T}) where T <: KAtom =
   Null.null(eltype(x))
-outdex(x::Vector) =
+outdex(x::AbstractVector) =
   isempty(x) ? Null.any_null : begin
     @inbounds v = x[1]
     fill(outdex(v), length(v))
   end
 outdex(x::AbstractDict) =
   isempty(x) ? Null.any_null : outdex′(first(x).second)
+outdex(x::NamedTuple) =
+  isempty(x) ? Null.any_null : begin
+    T, Ts... = typeof(x).parameters[2].parameters
+    for T′ ∈ Ts; T != T′ && return Null.any_null end
+    Null.null(T)
+  end
+function outdex(x::Table)
+  ks, ts = typeof(x).parameters[1].parameters
+  NamedTuple(zip(ks, map(Null.null, ts.parameters)))
+end
 
 # application
 
@@ -758,31 +890,33 @@ app(o::MFun, x) = o.f(x)
 @inline app(o::DFun, x) = P1Fun(o.f, x, 1:1)
 @inline app(o::DFun, x, y) = o.f(x, y)
 app(::AppFun, f, args...) = @papp(f, args)
-@inline app(::AppFun, f::Vector, args...) = app(f, args...)
+@inline app(::AppFun, f::AbstractVector, args...) = app(f, args...)
 (o::AppFun)(f, args...) = @papp(f, args)
-(o::AppFun)(f::Vector, args...) = app(f, args...)
-(o::AppFun)(f::Vector{T}, v::Vector{I}) where {T,I} = app(f, v)
+(o::AppFun)(f::AbstractVector, args...) = app(f, args...)
+(o::AppFun)(f::Table, args...) = app(f, args...)
+(o::AppFun)(f::KDict, args...) = app(f, args...)
+(o::AppFun)(f::AbstractVector{T}, v::AbstractVector{I}) where {T,I} = app(f, v)
 app(@nospecialize(f::KFun), args...) = @papp(f, args)
 
-app(x::Vector, is...) =
+app(x::AbstractVector, is::Vararg) =
   begin
     i, is... = is
     i === Colon() ?
       keach′(e -> app(e, is...), x) :
-      i isa Vector || i isa AbstractDict ?
+      i isa AbstractVector || i isa AbstractDict ?
       keach′(e -> app(e, is...), app(x, i)) :
       app(app(x, i), is...)
   end
-app(x::Vector, ::Colon) = x
-app(x::Vector, is::Vector) = app.(Ref(x), is)
-(app(x::Vector{T}, i::Int64)::T) where {T} =
+app(x::AbstractVector, ::Colon) = x
+app(x::AbstractVector, is::AbstractVector) = app.(Ref(x), is)
+(app(x::AbstractVector{T}, i::Int64)::T) where {T} =
   (v = get(x, i + 1, nothing); v === nothing ? outdex(x) : v)
-(app(x::Vector{T}, is::Vector{Int64})::Vector{T}) where {T} =
+(app(x::AbstractVector{T}, is::AbstractVector{Int64})::AbstractVector{T}) where {T} =
   app.(Ref(x), is)
-app(x::Vector, is::AbstractDict) =
-  OrderedDict(zip(keys(is), app(x, collect(values(is)))))
-Base.promote_op(::typeof(app), T::Type{<:Vector}, I::Type{<:Vector}) = T
-Base.promote_op(::typeof(app), T::Type{<:Vector}, I::Type{Int64}) = eltype(T)
+app(x::AbstractVector, is::KDict) = mapvalues(app, x, is)
+
+Base.promote_op(::typeof(app), T::Type{<:AbstractVector}, I::Type{<:AbstractVector}) = T
+Base.promote_op(::typeof(app), T::Type{<:AbstractVector}, I::Type{Int64}) = eltype(T)
 
 app(x::AbstractDict, is...) =
   begin
@@ -799,13 +933,13 @@ app(x::AbstractDict, is...) =
       app(dapp(x, k), is...)
   end
 app(x::AbstractDict, ::Colon) = x
-app(x::AbstractDict, i) =
+app(x::AbstractDict, i::KAtom) =
   i === kself ? x : begin
     xrank = urank(first(x).first)
     @assert xrank == 0 "rank error"
     dapp(x, i)
   end
-app(x::AbstractDict, i::Vector) =
+app(x::AbstractDict, i::AbstractVector) =
   begin
     xrank, irank = urank(first(x).first), rank(i)
     @assert xrank <= irank "rank error"
@@ -815,8 +949,34 @@ app(x::AbstractDict, i::Vector) =
       app.(Ref(x), i) :
       dappX(x, irank - xrank, i)
   end
-app(x::AbstractDict, i::AbstractDict) =
-  OrderedDict(zip(keys(i), app(x, collect(values(i)))))
+@inline app(x::AbstractDict, is::KDict) = mapvalues(app, x, is)
+@inline app(x::NamedTuple, is::KDict) = mapvalues(app, x, is)
+
+app(x::NamedTuple, i::KAtom) = outdex(x)
+app(x::NamedTuple, ::Colon) = x
+app(x::T, i::Symbol) where {T<:NamedTuple} =
+  begin
+    v = get(x, i, nothing)
+    if v === nothing; v = outdex(x) end
+    v
+  end
+app(x::NamedTuple, is...) =
+  begin
+    k, is... = is
+    k === Colon() ?
+      keach′(e -> app(e, is...), x) :
+      app(app(x, k), is...)
+  end
+app(x::NamedTuple, is::AbstractVector) = app.(Ref(x), is)
+
+app(x::Table, i::Symbol) =
+  hasproperty(x, i) ? getproperty(x, i) : fill(Null.int_null, length(x))
+app(x::Table, i::Int64) =
+  i < length(x) ? (@inbounds x[i + 1]) : outdex(x)
+app(x::Table, i::AbstractVector{Symbol}) =
+  app.(Ref(x), i)
+app(x::Table, i::AbstractVector{Int64}) =
+  Table(map(c -> app(c, i), TypedTables.columns(x)))
 
 dapp(d::AbstractDict, key) =
   begin
@@ -847,16 +1007,17 @@ end
 macro dyad4vector(f)
   f = esc(f)
   quote
-    $f(x::Vector, y) = $f.(x, y)
-    $f(x, y::Vector) = $f.(x, y)
-    $f(x::Vector, y::Vector) = (@assert length(x) == length(y); $f.(x, y))
+    $f(x::AbstractVector, y) = $f.(x, y)
+    $f(x, y::AbstractVector) = $f.(x, y)
+    $f(x::AbstractVector, y::AbstractVector) =
+      (@assert length(x) == length(y); $f.(x, y))
   end
 end
 
 macro monad4dict(f)
   f = esc(f)
   quote
-    $f(x::AbstractDict) = OrderedDict(zip(keys(x), $f.(values(x))))
+    $f(x::KDict) = mapvalues($f, x)
   end
 end
 
@@ -865,18 +1026,32 @@ macro dyad4dict(f, V=nothing)
   V = esc(V)
   quote
     $f(x::AbstractDict, y) = OrderedDict(zip(keys(x), $f.(values(x), y)))
+    $f(x::NamedTuple, y) = NamedTuple(zip(keys(x), $f.(values(x), y)))
     $f(x, y::AbstractDict) = OrderedDict(zip(keys(y), $f.(x, values(y))))
-    $f(x::AbstractDict, y::Vector) =
+    $f(x, y::NamedTuple) = NamedTuple(zip(keys(y), $f.(x, values(y))))
+    $f(x::AbstractDict, y::AbstractVector) =
       begin
         @assert length(x) == length(y)
         vals = $f.(values(x), y)
         OrderedDict(zip(keys(x), vals))
       end
-    $f(x::Vector, y::AbstractDict) =
+    $f(x::NamedTuple, y::AbstractVector) =
+      begin
+        @assert length(x) == length(y)
+        vals = $f.(values(x), y)
+        NamedTuple(zip(keys(x), vals))
+      end
+    $f(x::AbstractVector, y::AbstractDict) =
       begin
         @assert length(x) == length(y)
         vals = $f.(x, values(y))
         OrderedDict(zip(keys(y), vals))
+      end
+    $f(x::AbstractVector, y::NamedTuple) =
+      begin
+        @assert length(x) == length(y)
+        vals = $f.(x, values(y))
+        NamedTuple(zip(keys(y), vals))
       end
     $f(x::AbstractDict, y::AbstractDict) =
       begin
@@ -891,8 +1066,30 @@ macro dyad4dict(f, V=nothing)
         end
         x
       end
+    $f(x::NamedTuple, y::NamedTuple) =
+      begin
+        K = promote_type(keytype(x), keytype(y))
+        V = $V
+        if V === nothing
+          V = promote_type(valtype(x), valtype(y))
+        end
+        # TODO: produce NamedTuple here?
+        x = OrderedDict{K,V}(x)
+        for (k, v) in y
+          x[k] = $f(haskey(x, k) ? x[k] : identity(DFun($f), V), v)
+        end
+        x
+      end
   end
 end
+
+# macro dyad4table(f)
+#   f = esc(f)
+#   quote
+#     $f(x::Table, y::KAtom) =
+#       Table(map(f, TypedTables.columns(x)))
+#   end
+# end
 
 # trains
 
@@ -971,7 +1168,7 @@ arity(::Decode)::Arity = 1:1
     foldl(o.f, x)
 # x F/ seeded /  10+/1 2 3 -> 16
 (o::FoldD)(x, y) = foldl(o.f, y, init=x)
-(o::FoldD)(x::AbstractDict) = o(values(x))
+(o::FoldD)(x::KDict) = o(values(x))
 # F/[n;x;y] n-element of a recurrent series defined by F
 (o::FoldD)(n, x, y) =
   begin
@@ -1059,13 +1256,11 @@ arity(::Encode)::Arity = 1:1
       end
     end
   end
-(o::ScanD)(x::AbstractDict) =
-  isempty(x) ? x : OrderedDict(zip(keys(x), o(collect(values(x)))))
+(o::ScanD)(x::KDict) = isempty(x) ? x : mapvalues(o, x)
 # x F\ seeded \  10+\1 2 3 -> 11 13 16
 (o::ScanD)(x, y) = o.f(x, y)
 (o::ScanD)(x, y::Vector) = isempty(y) ? y : accumulate(o.f, y, init=x)
-(o::ScanD)(x, y::AbstractDict) =
-  isempty(y) ? y : OrderedDict(zip(keys(y), o(x, collect(values(y)))))
+(o::ScanD)(x, y::KDict) = isempty(y) ? y : mapvalues(o, x, y)
 # i f\ n-dos     5(2*)\1 -> 1 2 4 8 16 32
 (o::ScanM)(x::Int64, y) =
   begin
@@ -1214,7 +1409,7 @@ kscan(b::Union{Int64,Vector{Int64}}) = Encode(b)
 macro assertlen(xs...)
   len = -1
   for x in xs
-    if x isa Vector || x isa AbstractDict
+    if x isa Vector || x isa KDict
       lenx = length(x)
       len = len == -1 ? lenx : @assert len === lenx "length error"
     end
@@ -1237,8 +1432,7 @@ keach′(f, x::Vector) =
      T = Base.promote_op(f, eltype(typeof(x)))
      T[]
   end : f.(x)
-keach′(f, d::AbstractDict) =
-  OrderedDict(zip(keys(d), map(f, values(d))))
+keach′(f, d::KDict) = mapvalues(vs -> map(f, vs), d)
 
 # eachright/eachleft
 
@@ -1248,11 +1442,11 @@ keach′(f, d::AbstractDict) =
 # x F/: y eachright
 (o::EachR)(x, y) = app(o.f, x, y)
 (o::EachR)(x, y::Vector) = isempty(y) ? y : [app(o.f, x, ye) for ye in y]
-(o::EachR)(x, y::AbstractDict) = mapvalues(y -> o(x, y), y)
+(o::EachR)(x, y::KDict) = mapvalues(o, x, y)
 # x F\: y eachleft
 (o::EachL)(x, y...) = app(o.f, x, y...)
 (o::EachL)(x::Vector, y...) = isempty(x) ? x : [app(o.f, xe, y...) for xe in x]
-(o::EachL)(x::AbstractDict, y...) = mapvalues(x -> o(x, y...), x)
+(o::EachL)(x::KDict, y...) = mapvalues(x -> o(x, y...), x)
 
 keachright(f) = EachR(f)
 keachleft(f) = EachL(f)
@@ -1270,12 +1464,12 @@ arity(::Windows)::Arity = 1:1
 (o::EachP)(x::Vector) =
   isempty(x) ? x :
     @inbounds [i == 1 ? x[1] : o.f(x[i], x[i-1]) for i in 1:length(x)]
-(o::EachP)(x::AbstractDict) = mapvalues(o, x)
+(o::EachP)(x::KDict) = mapvalues(o, x)
 # s F': x   seeded eachprior
 (o::EachP)(s, x::Vector) =
   isempty(x) ? x :
     @inbounds [o.f(x[i], i == 1 ? s : x[i-1]) for i in 1:length(x)]
-(o::EachP)(s, x::AbstractDict) = mapvalues(x -> o(s, x), x)
+(o::EachP)(s, x::KDict) = mapvalues(o, s, x)
 # i': x     windows
 (o::Windows)(x::Vector) = kwindows(o.i, x)
 # i f': x   stencil
@@ -1320,8 +1514,9 @@ kflip(x::Vector) =
     end
     y
   end
-kflip(::AbstractDict) = @todo "+d should produce a table"
-
+kflip(d::KDict) =
+  Table(NamedTuple(p.first => tovec(p.second) for p in pairs(d)))
+  
 # x + y
 kadd(x, y) = x + y
 @dyad4char(kadd)
@@ -1344,6 +1539,7 @@ ksub(x, y) = x - y
 kfirst(x) = x
 kfirst(x::Vector) = isempty(x) ? Null.null(eltype(x)) : (@inbounds x[1])
 kfirst(x::AbstractDict) = isempty(x) ? Null.null(eltype(x)) : first(x).second
+kfirst(x::NamedTuple) = isempty(x) ? Null.null(eltype(x)) : first(x)
 
 # x * y
 kmul(x, y) = x * y
@@ -1392,7 +1588,8 @@ kenum(x::Vector) =
     end
   end
 # !d keys
-kenum(x::AbstractDict) = collect(keys(x))
+kenum(x::KDict) = collect(keys(x))
+kenum(x::Table) = collect(TypedTables.columnnames(x))
 
 # i!N mod / div
 kmod(x::Int64, y) =
@@ -1401,15 +1598,21 @@ kmod(x::Int64, y::Char) = kmod(x, Int(y))
 kmod(x::Char, y::Int64) = kmod(Int(x), y)
 kmod(x::Char, y::Char) = kmod(Int(x), Int(y))
 kmod(x::Int64, y::Vector) = kmod.(x, y)
+# TODO: NamedTuple
 kmod(x::Char, y::AbstractDict) = kmod(Int(x), y)
 kmod(x::Int64, y::AbstractDict) = OrderedDict(zip(keys(y), kmod.(x, values(y))))
 
 # x!y dict
 kmod(x, y) = OrderedDict(x => y)
+kmod(x::Symbol, y) = (;x => y)
 kmod(x::Vector, y) = isempty(x) ? OrderedDict() : OrderedDict(x .=> y)
+kmod(x::Vector{Symbol}, y) = isempty(x) ? NamedTuple() : NamedTuple(x .=> y)
 kmod(x, y::Vector) = isempty(y) ? OrderedDict() : OrderedDict(x => y[end])
+kmod(x::Symbol, y::Vector) = isempty(y) ? NamedTuple : (;x => y[end])
 kmod(x::Vector, y::Vector) =
   (@assert length(x) == length(y); OrderedDict(zip(x, y)))
+kmod(x::Vector{Symbol}, y::Vector) =
+  (@assert length(x) == length(y); NamedTuple(x .=> y))
 
 # &I where
 kwhere(x::Int64) = fill(0, x)
@@ -1425,6 +1628,7 @@ kand(x, y) = min(x, y)
 krev(x) = x
 krev(x::Vector) = reverse(x)
 krev(x::AbstractDict) = OrderedDict(reverse(collect(x)))
+krev(x::NamedTuple) = NamedTuple(reverse(collect(pairs(x))))
 
 # N|N max/or
 kor(x, y) = max(x, y)
@@ -1476,15 +1680,69 @@ kgroup(x::Int64) =
   end
 
 # =X group
-kgroup(x::Vector) =
+kgroup(x::AbstractVector) =
   begin
-    g = OrderedDict{eltype(x),Vector{Int64}}()
-    allocg = Vector{Int64}
-    for (n, xe) in enumerate(x)
-      push!(get!(allocg, g, xe), n - 1)
+    T = eltype(x)
+    if length(x) < 30_000_000
+      g = OrderedDict{T,Vector{Int64}}()
+      allocg = Vector{Int64}
+      for (n, xe) in enumerate(x)
+        idx = ht_keyindex2(g, xe)
+        if idx < 0
+          _setindex!(g, [n-1], xe, -idx)
+        else
+          @inbounds push!(g.vals[idx], n - 1)
+        end
+      end
+      g
+    else
+      ps = collect(partition(x, 5_000_000))
+      gs = Vector{OrderedDict{T,Vector{Int64}}}(undef, length(ps))
+      Threads.@threads for i = 1:length(ps)
+        gs[i] = kgroup(ps[i])
+      end
+      r = OrderedDict{T,Vector{Int64}}()
+      for g in gs; mergewith!(append!, r, g) end
+      r
     end
-    g
   end
+
+kgrouplen(x::AbstractVector) =
+  begin
+    T = eltype(x)
+    if length(x) < 30_000_000
+      g = OrderedDict{T,Int64}()
+      allocg = Vector{Int64}
+      for xe in x
+        idx = ht_keyindex2(g, xe)
+        if idx < 0
+          _setindex!(g, 1, xe, -idx)
+        else
+          @inbounds g.vals[idx] = g.vals[idx] + 1
+        end
+      end
+      g
+    else
+      ps = collect(partition(x, 5_000_000))
+      gs = Vector{OrderedDict{T,Int64}}(undef, length(ps))
+      Threads.@threads for i = 1:length(ps)
+        gs[i] = kgrouplen(ps[i])
+      end
+      r = OrderedDict{T,Int64}()
+      for g in gs; mergewith!((+), r, g) end
+      r
+    end
+  end
+
+function partition(x::Table, n::Int64)
+  ns = TypedTables.columnnames(x)
+  cs = TypedTables.columns(x)
+  cs = map(c -> collect(Iterators.partition(c, n)), cs)
+  Iterators.map(vs -> Table(NamedTuple(zip(ns, vs))), zip(cs...))
+end
+@inline function partition(x::AbstractVector, n::Int64)
+  Iterators.partition(x, n)
+end
 
 # x=y eq
 keq(x, y) = Int(x == y)
@@ -1504,7 +1762,11 @@ kconcat(x::Vector, y) = Any[x..., y]
 kconcat(x::Vector{T}, y::T) where T = T[x..., y]
 kconcat(x::Vector, y::Vector) = Any[x..., y...]
 kconcat(x::Vector{T}, y::Vector{T}) where T = vcat(x, y)
+# TODO: NamedTuple
 kconcat(x::AbstractDict, y::AbstractDict) = merge(x, y)
+kconcat(x::NamedTuple, y::NamedTuple) = (;x...,y...)
+kconcat(x::AbstractDict, y::NamedTuple) = merge(x, OrderedDict(pairs(y)))
+kconcat(x::NamedTuple, y::AbstractDict) = merge(OrderedDict(pairs(x)), y)
 
 klist(x::T...) where T = [x...]
 klist(x...) = Any[x...]
@@ -1518,8 +1780,7 @@ knull(x::Vector) = isempty(x) ? Int64[] : knull.(x)
 # a^y fill
 kfill(x::KAtom, y) = Null.isnull(y) ? x : y
 kfill(x::KAtom, y::Vector) = kfill.(x, y)
-kfill(x::KAtom, y::AbstractDict) =
-  OrderedDict(zip(keys(y), kfill.(x, values(y))))
+kfill(x::KAtom, y::KDict) = mapvalues(kfill, x, y)
 
 # X^y without
 kfill(x::Vector, y) =
@@ -1532,20 +1793,26 @@ kfill(x::Vector, y::Vector) =
 
 # #x length
 klen(x) = 1
-klen(x::Vector) = length(x)
-klen(x::AbstractDict) = length(x)
+klen(x::AbstractVector) = length(x)
+klen(x::KDict) = length(x)
 
 # i#y reshape
 kreshape(x::Int64, y) = kreshape(x, [y])
-kreshape(x::Int64, y::Vector) =
-  begin
-    x == 0 && return empty(y)
-    x == Null.int_null && return y
-    y = x < 0 ? Iterators.drop(y, length(y) + x) : y
-    collect(Iterators.take(Iterators.cycle(y), abs(x)))
-  end
+function kreshape(x::Int64, y::AbstractVector)
+  x == 0 && return empty(y)
+  x == Null.int_null && return y
+  # TODO: handle negative drop here
+  y = x < 0 ? Iterators.drop(y, length(y) + x) : y
+  collect(Iterators.take(Iterators.cycle(y), abs(x)))
+end
+kreshape(x::Int64, y::Table) =
+  Table(map(c -> kreshape(x, c), TypedTables.columns(y)))
 kreshape(x::Int64, y::AbstractDict) =
   OrderedDict(kreshape(x, collect(y)))
+kreshape(x::Int64, y::NamedTuple) =
+  NamedTuple(kreshape(x, pairs(y)))
+function kreshape_1(x::Int64, y::AbstractVector)
+end
 
 # I#y reshape
 kreshape(x::Vector{Int64}, y) = kreshape(x, [y])
@@ -1575,6 +1842,10 @@ kreshape(x::KFun, y::AbstractDict) =
 # x#d take
 kreshape(x::Vector, y::AbstractDict) = 
   OrderedDict(zip(x, app.(Ref(y), x)))
+kreshape(x::Vector, y::NamedTuple) = 
+  NamedTuple(zip(x, app.(Ref(y), x)))
+kreshape(x::Vector{Symbol}, y::Table) =
+  Table(NamedTuple(zip(x, app(y, x))))
 
 # _n floor
 kfloor(x::Int64) = x
@@ -1584,17 +1855,33 @@ kfloor(x::Float64) = x === NaN ? Null.int_null : floor(Int64, x)
 kfloor(x::Char) = lowercase(x)
 kfloor(x::Symbol) = Symbol(lowercase(string(x)))
 
-kfloor(x::Vector) = kfloor.(x)
+kfloor(x::AbstractVector) = kfloor.(x)
+kfloor(x::Vector{Float64}) = begin
+  r = Vector{Int64}(undef, length(x))
+  @tturbo for i in 1:length(x)
+    xe = x[i]
+    r[i] = isnan(xe) ? Null.int_null : floor(Int64, xe)
+  end
+  r
+end
 @monad4dict(kfloor)
 
 # i_Y drop
-kdrop(x::Int64, y::Vector) =
-  x == 0 ? y : x == Null.int_null ? y : x > 0 ? y[x + 1:end] : y[1:end + x]
+# TODO: use @view for huge vectors?
+kdrop(x::Int64, y::AbstractVector) =
+  x == 0 ? y : x == Null.int_null ? y :
+    x > 0 ? y[x + 1:end] : y[1:end + x]
 kdrop(x::Int64, y::AbstractDict) =
   begin
     ks = kdrop(x, collect(keys(y)))
     vs = kdrop(x, collect(values(y)))
     OrderedDict(zip(ks, vs))
+  end
+kdrop(x::Int64, y::NamedTuple) =
+  begin
+    ks = kdrop(x, collect(keys(y)))
+    vs = kdrop(x, collect(values(y)))
+    NamedTuple(zip(ks, vs))
   end
 kdrop(x, y::AbstractDict) =
   haskey(y, x) ?
@@ -1613,6 +1900,8 @@ kdrop(x::Vector, y::AbstractDict) =
         y
     end
   end
+kdrop(x, y::NamedTuple) = y
+kdrop(x::Symbol, y::NamedTuple) = kdrop(y, x)
 
 # I_Y cut
 kdrop(x::Vector{Int64}, y::Vector) =
@@ -1641,6 +1930,10 @@ kdrop(x::Vector, y::Int64) =
   y < 0 || y >= length(x) ? x : deleteat!(copy(x), [y+1])
 kdrop(x::AbstractDict, y) =
   delete!(copy(x), y)
+kdrop(x::NamedTuple, y) = x
+kdrop(x::NamedTuple, y::Symbol) =
+  haskey(x, y) ?
+    NamedTuple(filter(p -> 0==kmatch(p.first, y), pairs(x))) : x
 
 # $x string
 kstring(x::KAtom) = collect(string(x))
@@ -1685,7 +1978,7 @@ kuniq(x::Vector) =
   end
 
 # .d values
-kget(x::AbstractDict) = collect(values(x))
+kget(x::KDict) = collect(values(x))
 
 # x.y appn
 kappn(x, y) = app(x, y)
@@ -1789,12 +2082,22 @@ adverbs = Dict(
                Symbol(raw"':") => R.keachprior,
               )
 
+idioms2 = Dict(
+               (Adverb("'", Verb("#:")), Verb("=:")) => R.MFun(R.kgrouplen)
+              )
+
 compile(str::String) = compile(Parse.parse(str))
 compile(syn::Seq) = quote $(map(compile1, syn.body)...) end
 
 compile1(syn::App) =
   begin
     f, args = syn.head, syn.args
+    if length(args) == 1 && args[1] isa App
+      idiom = get(idioms2, (f, args[1].head), nothing)
+      if idiom !== nothing
+        f, args = idiom, args[1].args
+      end
+    end
     args, pargs =
       begin
         args′, pargs = [], []
@@ -1826,6 +2129,8 @@ compile1(syn::App) =
       @assert isempty(pargs) "cannot project :x"
       rhs=args[1]
       :(return $rhs)
+    elseif f isa R.KFun
+      compileapp(f, args, pargs)
     elseif f isa Union{Verb,Adverb}
       # @assert length(args) in (1, 2)
       f = compile1(f)
@@ -1886,6 +2191,9 @@ compile1(syn::Union{Verb,Adverb,Train}) = :($(compilefun(syn)))
 
 compileargs(f, args::Vector) =
   begin
+    length(args) == 1 && return f([args[1] isa Syn ?
+                                   compile1(args[1]) :
+                                   args[1]])
     bindings = []
     args′ = []
     for arg in args
@@ -1937,7 +2245,12 @@ compileapp(f::R.KFun, args) =
 
 compilefun(syn) = compile1(syn)
 compilefun(syn::Train) =
-  :($(R.Train)($(compile1(syn.head)), $(compile1(syn.next))))
+  begin
+    idiom = get(idioms2, (syn.head, syn.next), nothing)
+    idiom !== nothing ?
+      idiom :
+      :($(R.Train)($(compile1(syn.head)), $(compile1(syn.next))))
+  end
 compilefun(syn::Verb) =
   begin
     f = get(verbs, syn.v, nothing)

@@ -23,6 +23,4 @@
 `~d` distributes `~` along dict values:
     
     julia> k""" ~`a`b!1 0 """
-    K.Runtime.OrderedDict{Symbol, Int64} with 2 entries:
-      :a => 0
-      :b => 1
+    (a = 0, b = 1)

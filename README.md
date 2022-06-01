@@ -30,6 +30,20 @@ The K REPL can be entered via `\` key:
       +/1 2 3 4
     10
 
+## Motivation
+
+K.jl is not an independent implementation of K programming language but a
+notation to manipulate native Julia data structures.
+
+K.jl works by parsing a string with K notation and turning it into Julia AST,
+you can of think of K.jl as of a non-trivial macro. Fortunately semantics of K
+and Julia are not so different and thus K.jl is relatively simple.
+
+Why K though? K is terse and expressive. Programs in K are very small and it is
+easier to keep them entirely in one's head. K programs can be used for
+communication (it's easier to send a K one liner, the information density is
+high).
+
 ## Status & Roadmap
 
 K.jl is wildly incomplete at this point, any help would be very much
