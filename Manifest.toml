@@ -2,7 +2,7 @@
 
 julia_version = "1.8.0-beta3"
 manifest_format = "2.0"
-project_hash = "598d60e99b68b7d2dc379337f1de63e2eb6c32ac"
+project_hash = "595ba6e9187c3a6e56ad8c24ea1691b04791c787"
 
 [[deps.AbstractTrees]]
 git-tree-sha1 = "03e0550477d86222521d254b741d470ba17ea0b5"
@@ -488,12 +488,6 @@ uuid = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 [[deps.REPL]]
 deps = ["InteractiveUtils", "Markdown", "Sockets", "Unicode"]
 uuid = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
-
-[[deps.REPLVim]]
-deps = ["JSON3", "Logging", "REPL", "Sockets", "StructTypes"]
-path = "/home/andreypopp/workspace/julia-repl-vim/"
-uuid = "2a140ba1-97ad-47e0-ac3b-8e555ea992ff"
-version = "0.1.0"
 
 [[deps.Random]]
 deps = ["SHA", "Serialization"]

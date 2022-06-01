@@ -115,7 +115,7 @@ end
                            raw"a:0;(a;a:1;a)"
                           ])
   @testset "eval" begin
-    for (n, (t, e)) in enumerate(cases[1:140])
+    for (n, (t, e)) in enumerate(cases)
       skipped = t in eval_skip ||
                 startswith(t, "`?") ||
                 startswith(t, "`j") ||
