@@ -411,7 +411,7 @@ version = "1.0.0"
 
 [[deps.NarrativeTest]]
 deps = ["Test"]
-git-tree-sha1 = "f110206284c6f7054d613696db4ef63c509d82ad"
+path = "NarrativeTest.jl"
 uuid = "9563631e-acd4-5dd8-bebb-4cf36518960d"
 version = "0.7.3"
 
