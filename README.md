@@ -56,8 +56,6 @@ appreciated, list of incomplete items include:
   - [ ] `nv:x     reassignment`
   - [ ] `n[..]:x  indexed assignment`
 - verbs
-  - [ ] `i?x roll`
-  - [ ] `i?x deal`
   - [ ] `s$y cast`
   - [ ] `s$y int`
   - [ ] ` $x string`
