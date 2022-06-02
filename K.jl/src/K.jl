@@ -1136,9 +1136,10 @@ arity(::Decode)::Arity = 1:1
 # f/ converge
 (o::FoldM)(x) =
   begin
+    ox = x
     while true
       x′ = o.f(x)
-      !(hash(x′) == hash(x) && isequal(x, x′)) || break
+      !((hash(x′) == hash(x) && isequal(x, x′)) || (hash(x′) == hash(ox) && isequal(x′, ox))) || break
       x = x′
     end
     x
@@ -1290,11 +1291,12 @@ arity(::Encode)::Arity = 1:1
 #   f\ converges
 (o::ScanM)(x) =
   begin
+    ox = x
     T = promote_type(Base.promote_op(o.f, typeof(x)), typeof(x))
     r = T[x]
     while true
       x′ = o.f(x)
-      !(hash(x′) == hash(x) && isequal(x, x′)) || break
+      !((hash(x′) == hash(x) && isequal(x, x′)) || (hash(x′) == hash(ox) && isequal(x′, ox))) || break
       x = x′
       push!(r, x)
     end
