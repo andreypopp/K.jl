@@ -1841,6 +1841,8 @@ kreshape(x::KFun, y) =
   replicate(y, x(y))
 kreshape(x::KFun, y::AbstractDict) = 
   OrderedDict(replicate(collect(y), x(collect(values(y)))))
+kreshape(x::KFun, y::NamedTuple) = 
+  NamedTuple(replicate(collect(pairs(y)), x(collect(values(y)))))
 
 # x#d take
 kreshape(x::Vector, y::AbstractDict) = 
@@ -1890,6 +1892,11 @@ kdrop(x, y::AbstractDict) =
   haskey(y, x) ?
     OrderedDict(filter(item -> 0==kmatch(item.first, x), y)) :
     y
+kdrop(x, y::NamedTuple) = y
+kdrop(x::Symbol, y::NamedTuple) =
+  hasproperty(y, x) ?
+    NamedTuple(filter(item -> 0==kmatch(item.first, x), pairs(y))) :
+    y
 kdrop(x::Vector, y::AbstractDict) =
   begin
     isempty(y) && return y
@@ -1903,8 +1910,12 @@ kdrop(x::Vector, y::AbstractDict) =
         y
     end
   end
-kdrop(x, y::NamedTuple) = y
-kdrop(x::Symbol, y::NamedTuple) = kdrop(y, x)
+kdrop(x::Vector, y::NamedTuple) = y
+kdrop(x::Vector{Symbol}, y::NamedTuple) =
+  begin
+    m = OrderedDict(x .=> true)
+    NamedTuple(filter(item -> !haskey(m, item.first), pairs(y)))
+  end
 
 # I_Y cut
 kdrop(x::Vector{Int64}, y::Vector) =
