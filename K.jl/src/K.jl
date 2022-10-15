@@ -181,9 +181,9 @@ struct Adverb <: Syn
 end
 
 struct Id <: Syn
-  v::Symbol
+  v::Union{Symbol,Expr}
   Id(v::Symbol) = new(v)
-  Id(v::String) = new(Symbol(v))
+  Id(v::String) = new(Meta.parse(v))
 end
 
 struct Omit <: Syn
@@ -2147,7 +2147,7 @@ compile1(syn::App) =
       end
     if isempty(args); args = [vself] end
     if f isa Verb && f.v === :(:) &&
-        length(args)==2 && args[1] isa Symbol
+      length(args)==2 && (args[1] isa Symbol || args[1] isa Expr)
       # assignment `n:x`
       @assert isempty(pargs) "cannot project n:x"
       name,rhs=args
