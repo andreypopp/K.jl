@@ -2125,6 +2125,20 @@ compile(syn::Seq) = quote $(map(compile1, syn.body)...) end
 compile1(syn::App) =
   begin
     f, args = syn.head, syn.args
+    if f isa Verb && f.v === :(:) &&
+      length(args)==2 && (args[1] isa Id || args[1] isa App)
+      # assignment `n:x`
+      lhs,rhs=args
+      return if lhs isa Id
+        :(begin $(compile1(lhs)) = $(compile1(rhs)) end)
+      else # lhs isa App
+        @assert lhs.head isa Id
+        idx = map(compile1, lhs.args)
+        lhs = compile1(lhs.head)
+        lhs′ = gensym()
+        :(let $lhs′ = copy($lhs); $lhs′[[$(idx...)] .+ 1] .= $(compile1(rhs)); $lhs′ end)
+      end
+    end
     if length(args) == 1 && args[1] isa App
       idiom = get(idioms2, (f, args[1].head), nothing)
       if idiom !== nothing
@@ -2146,13 +2160,7 @@ compile1(syn::App) =
         args′, pargs
       end
     if isempty(args); args = [vself] end
-    if f isa Verb && f.v === :(:) &&
-      length(args)==2 && (args[1] isa Symbol || args[1] isa Expr)
-      # assignment `n:x`
-      @assert isempty(pargs) "cannot project n:x"
-      name,rhs=args
-      :(begin $name = $rhs end)
-    elseif f isa Verb && f.v === :($) && length(args)==3
+    if f isa Verb && f.v === :($) && length(args)==3
       # conditional `$[c;t;e]`
       @assert isempty(pargs) raw"cannot project $[c;t;e]"
       c,t,e=args
