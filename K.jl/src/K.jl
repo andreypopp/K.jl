@@ -1406,8 +1406,7 @@ kscan(b::Union{Int64,Vector{Int64}}) = Encode(b)
 
 # each
 
-@adverb EachM 1:1
-@adverb EachD 2:8
+@adverb Each 1:8
 
 macro assertlen(xs...)
   len = -1
@@ -1420,14 +1419,14 @@ macro assertlen(xs...)
 end
 
 #   f' each1
-(o::EachM)(x) = keach′(o.f, x)
+(o::Each)(x) = keach′(o.f, x)
 # x F' each2
-(o::EachD)(x::KAtom, y::KAtom) = o.f(x, y)
-(o::EachD)(x::KAtom, y) = o.f.(x, y)
-(o::EachD)(x, y::KAtom) = o.f.(x, y)
-(o::EachD)(xs...) = (@assertlen(xs...); o.f.(xs...))
+(o::Each)(x::KAtom, y::KAtom) = o.f(x, y)
+(o::Each)(x::KAtom, y) = o.f.(x, y)
+(o::Each)(x, y::KAtom) = o.f.(x, y)
+(o::Each)(xs...) = (@assertlen(xs...); o.f.(xs...))
 
-keach(f::KFun) = arity(f).start == 2 ? EachD(f) : EachM(f)
+keach(f::KFun) = Each(f)
 
 keach′(f, x) = f(x)
 keach′(f, x::Vector) =
