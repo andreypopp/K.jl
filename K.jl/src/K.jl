@@ -1496,6 +1496,16 @@ keachprior(f::Int64) = Windows(f)
 
 # verbs
 
+# `I$x
+kint(x, y::Vector{Char}) =
+  begin
+    @assert x == :I "only `I\$x is implemented"
+    # TODO: not cool needs to alloc a string...
+    parse(Int, join(y))
+  end
+@dyad4vector(kint)
+@dyad4dict(kint)
+
 # :: x
 kself(x) = x
 
@@ -2062,6 +2072,7 @@ using ..Syntax,..Parse
 import ..Runtime as R
 
 verbs = Dict(
+             Symbol(raw"$")  => R.DFun(R.kint),
              Symbol(raw"::") => R.MFun(R.kself),
              Symbol(raw":")  => R.DFun(R.kright),
              Symbol(raw"+:") => R.MFun(R.kflip),
@@ -2278,7 +2289,7 @@ compileapp(f::R.KFun, args) =
       compileargs(args) do args
         alen in flen ? :($f($(args...))) :
         alen < flen.start ? :($(R.app)($f, $(args...))) :
-        @assert false "invalid arity"
+        @assert false "invalid arity $alen ($f expected $flen)"
       end
     end
   end
