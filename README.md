@@ -80,6 +80,24 @@ appreciated, list of incomplete items include:
   - [ ] support from most of primitives are missing
 - [ ] pretty printer / value string representation
 
+## Development
+
+    $ julia
+    julia> using Pkg
+    julia> Pkg.activate(".")
+    julia> Pkg.develop("./K.jl")
+    julia> Pkg.develop("./NarrativeTest.jl")
+    julia> Pkg.instantiate()
+
+To run tests:
+
+    $ make test
+
+To run tests (compat with ngn/k, very broken, not a goal but helps guiding
+K.jl):
+
+    $ make test-ngn
+
 [Julia]: https://julialang.org
 [K]: https://en.wikipedia.org/wiki/K_(programming_language)
 [ngn/k]: https://codeberg.org/ngn/k

@@ -1,6 +1,7 @@
 [deps]
 AbstractTrees = "1520ce14-60c1-5f80-bbc7-55ef81b5835c"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
 JSONLines = "24c2b838-1c8b-4567-aca0-d45e60436bb9"
