@@ -904,6 +904,8 @@ end
 macro dyad4vector(f)
   f = esc(f)
   quote
+    $f(x::Vector{Int64}, y) = $f.(x, y)
+    $f(x, y::Vector{Int64}) = $f.(x, y)
     $f(x::AbstractVector, y) = $f.(x, y)
     $f(x, y::AbstractVector) = $f.(x, y)
     $f(x::AbstractVector, y::AbstractVector) =
@@ -1426,7 +1428,7 @@ kflip(d::KDict) =
   Table(NamedTuple(p.first => tovec(p.second) for p in pairs(d)))
   
 # x + y
-kadd(x, y) = x + y
+@inline kadd(x, y) = x + y
 @dyad4char(kadd)
 @dyad4vector(kadd)
 @dyad4dict(kadd)
